@@ -1,0 +1,4 @@
+interface:
+  display_name: "Inventory Auditor Maintainer"
+  short_description: "Safely update the app and analysis variables"
+  default_prompt: "Use $inventory-auditor-maintainer to update the Inventory Auditor safely."

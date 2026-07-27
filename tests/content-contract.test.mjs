@@ -83,7 +83,8 @@ test("the runtime analysis policy keeps its safety contract", () => {
     '"variable_id"',
     "prompt injection",
     "baseline_only",
-    '"recommendations"',
+    '"assessments"',
+    '"adjustment_percent"',
     '"sources"',
   ]) {
     assert.ok(policy.toLowerCase().includes(marker.toLowerCase()), `missing analysis policy marker: ${marker}`);

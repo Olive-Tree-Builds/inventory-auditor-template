@@ -50,3 +50,20 @@ test("forecasting uses a compact disclosure, a stable five-column table, and rea
   assert.doesNotMatch(styles, /\.forecast-reasoning\s*\{[^}]*min-width:\s*690px/s);
   assert.match(styles, /\.forecast-product-row\s*\{[^}]*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/s);
 });
+
+test("saved forecasts include a location-and-period decision breakdown for every active factor", () => {
+  assert.match(dashboard, /const forecastDecisionBreakdowns = useMemo/);
+  assert.match(dashboard, /new Map\(activeVariables\.map\(\(variable\) => \[variable\.id, variable\.name\]\)\)/);
+  assert.match(dashboard, /locationName: locationById\.get\(run\.locationId\)\?\.name/);
+  assert.match(dashboard, /AI decision breakdown/);
+  assert.match(dashboard, /Why these numbers\?/);
+  assert.match(dashboard, /History-only estimate/);
+  assert.match(dashboard, /Factor change/);
+  assert.match(dashboard, /All factors reviewed/);
+  assert.match(dashboard, /What the AI found:/);
+  assert.match(dashboard, /Why it matters:/);
+  assert.match(dashboard, /Product-by-product conclusion/);
+  assert.match(dashboard, /Uses the saved forecast—no additional AI call/);
+  assert.match(styles, /\.forecast-decision-math\s*\{/);
+  assert.match(styles, /\.forecast-factor-explanation summary\s*\{/);
+});

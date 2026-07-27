@@ -1,3 +1,5 @@
+import type { ForecastHistoricalEvidence } from "./forecast-evidence";
+
 export type ForecastGrouping = "day" | "week" | "month" | "quarter" | "year";
 
 export type ActiveForecastVariable = { id: string; name: string };
@@ -66,7 +68,8 @@ export type ForecastProviderRequest = {
   };
   products: ForecastProduct[];
   activeVariables: ActiveForecastVariable[];
-  historicalRows: HistoricalForecastRow[];
+  /** Compact, checksummed evidence calculated from authorized history by the host. */
+  historicalEvidence: ForecastHistoricalEvidence;
   baselines: HistoricalBaseline[];
   signal?: AbortSignal;
 };

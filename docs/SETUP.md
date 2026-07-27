@@ -86,7 +86,7 @@ Keep email/password sign-up and email confirmation enabled. First-owner creation
 The default handoff path stores these after sign-in under **Configuration → Keys**:
 
 - domain-restricted Resend Sending access key plus a plain verified sender email
-- AI API key plus provider name, model, and Responses-compatible HTTPS base URL
+- AI API key plus provider family (`openai`, `anthropic`, `google`, or `responses-compatible`), model, and HTTPS base URL
 - fine-grained GitHub token plus repository owner/name and fixed `trunk` branch
 
 The server encrypts saved secrets with AES-256-GCM under `APP_SECRET_ENCRYPTION_KEY`; the database stores only an encrypted envelope, mask, and keyed fingerprint. Browser responses never contain the saved value.
@@ -95,7 +95,9 @@ The server encrypts saved secrets with AES-256-GCM under `APP_SECRET_ENCRYPTION_
 
 The Resend connection probe uses a deliberately invalid, non-deliverable `/emails` request: Resend's authenticated validation response proves a Sending access key without queuing mail. **Send test to me** separately proves the verified sender and real delivery.
 
-The AI base URL must support `GET /models` and `POST /responses`. The selected model must support the `web_search` tool, structured JSON output, and source URLs. A connection test proves credential access; the first cited forecast proves full compatibility.
+OpenAI uses the Responses API, Anthropic uses the Messages API, and Google uses Gemini `generateContent`; the app selects the correct authentication, endpoint, search tool, and response parser. Responses-compatible services must expose `GET /models` and `POST /responses`. The exact model must perform live search and return source URLs. **Test capabilities** makes one small live provider request and can consume credits; it verifies live search and JSON that passes the app's server-side validator. One single-location cited forecast remains the final real-data check.
+
+For the first test, choose a lower-cost model that the provider currently documents as supporting live web search. Inventory Auditor requests low reasoning effort for native OpenAI forecasts and gives live research up to five minutes to finish. Select only one location for the first forecast so cost, latency, and any provider error remain easy to evaluate.
 
 The GitHub token should be restricted to the one repository with Contents read/write only. Analysis Skill updates use compare-and-swap against the expected GitHub blob SHA, write root `ANALYSIS_SKILL.md` on `trunk`, read the result back, and store its policy version/checksum in Supabase.
 
@@ -116,7 +118,7 @@ Manual runs use `POST /api/forecasts/run` after server-side workspace, role, and
 1. loads and validates the current GitHub-backed Analysis Skill and requires it to match the explicitly reviewed active revision;
 2. fetches only authorized location/product/history rows;
 3. calculates the host historical baseline;
-4. invokes the configured Responses-compatible provider with live web search;
+4. invokes the selected provider's native adapter with live web search;
 5. validates location IDs, product IDs, whole-number quantities, active variable IDs, and HTTPS evidence URLs;
 6. stores the normalized run, items, sources, policy version, and checksum atomically against the current per-attempt claim token.
 

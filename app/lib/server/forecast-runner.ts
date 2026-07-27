@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { calculateHistoricalBaselines } from "./historical-baseline";
-import type { ActiveForecastVariable, ForecastGrouping, ForecastProduct, HistoricalForecastRow } from "./forecast-provider";
-import { OpenAIResponsesForecastProvider } from "./openai-responses-forecast";
-import { validateForecastOutput, type ForecastOutput } from "./forecast-output";
+import { buildForecastEvidence } from "./forecast-evidence";
+import type { ActiveForecastVariable, ForecastGrouping, ForecastProduct, ForecastProvider, HistoricalForecastRow } from "./forecast-provider";
+import { assembleForecastOutputFromResearch } from "./forecast-research";
+import { createForecastProvider } from "./ai-forecast-provider";
+import { normalizeAiProviderFamily } from "./ai-provider-config";
+import type { ForecastOutput } from "./forecast-output";
+import { safeForecastFailure } from "./forecast-failure";
 import { resolveProviderCredential } from "./credential-resolver";
 import { SupabaseCredentialStore } from "./supabase-credential-store";
 import {
@@ -112,7 +116,7 @@ async function aiProvider(input: {
   admin: SupabaseClient;
   workspaceId: string;
   encryptionKey: string;
-}): Promise<{ provider: OpenAIResponsesForecastProvider; name: string; model: string } | null> {
+}): Promise<{ provider: ForecastProvider; name: string; model: string } | null> {
   const repository = new SupabaseIntegrationConnectionRepository(input.admin);
   const summaries = summarizeProviderConnections(await repository.list(input.workspaceId));
   const summary = summaries.find((item) => item.provider === "ai");
@@ -128,12 +132,14 @@ async function aiProvider(input: {
   });
   const name = String(configuration.providerName);
   const model = String(configuration.modelName);
+  const providerFamily = normalizeAiProviderFamily(name);
+  if (!providerFamily) return null;
   return {
-    name,
+    name: providerFamily,
     model,
-    provider: new OpenAIResponsesForecastProvider({
+    provider: createForecastProvider({
       apiKey: credential.value,
-      providerName: name,
+      providerFamily,
       model,
       baseUrl: String(configuration.baseUrl),
     }),
@@ -295,6 +301,17 @@ export async function runWorkspaceForecasts(input: {
       date: String(row.business_date), locationId: String(row.location_id), productId: String(row.product_id), product: String(row.product_name), quantity: Number(row.quantity),
     }));
     const baselines = calculateHistoricalBaselines({ historicalRows, locations: [location.id], products, startDate: period.startDate, endDate: period.endDate });
+    const historicalEvidence = buildForecastEvidence({
+      historicalRows,
+      baselines,
+      locations: [location.id],
+      products,
+      grouping: input.grouping,
+      forecastStartDate: period.startDate,
+      forecastEndDate: period.endDate,
+      historyStartDate: historyStart,
+      historyEndDate: historyEnd,
+    });
     let output: ForecastOutput | null = null;
     let warning = variables.length ? providerWarning : "No external variables are active in the Analysis Skill; this run is historical baseline only.";
     if (variables.length && provider) {
@@ -327,28 +344,34 @@ export async function runWorkspaceForecasts(input: {
           period: { grouping: input.grouping, startDate: period.startDate, endDate: period.endDate },
           products,
           activeVariables: variables,
-          historicalRows,
+          historicalEvidence,
           baselines,
         });
-        output = validateForecastOutput(raw, {
-          runId: requestId,
-          workspaceId: input.workspaceId,
-          brandId: location.brand_id,
-          locationIds: [location.id],
-          timeZone: location.time_zone,
-          products,
+        output = assembleForecastOutputFromResearch({
+          rawResearch: raw,
           baselines,
           activeVariables: variables,
-          period: { grouping: input.grouping, startDate: period.startDate, endDate: period.endDate },
-          history: { startDate: historyStart, endDate: historyEnd, rowsUsed: rows.length },
-          serverTimestamp: new Date().toISOString(),
-          policy: { id: policy.policy_id, version: policy.policy_version, sha256: policy.sha256, outputSchemaVersion: policy.output_schema_version },
-          provider: { name: provider.name, model: provider.model },
+          dataQualityIssues: historicalEvidence.history.issues,
+          context: {
+            runId: requestId,
+            workspaceId: input.workspaceId,
+            brandId: location.brand_id,
+            locationIds: [location.id],
+            timeZone: location.time_zone,
+            products,
+            baselines,
+            activeVariables: variables,
+            period: { grouping: input.grouping, startDate: period.startDate, endDate: period.endDate },
+            history: { startDate: historyStart, endDate: historyEnd, rowsUsed: rows.length },
+            serverTimestamp: new Date().toISOString(),
+            policy: { id: policy.policy_id, version: policy.policy_version, sha256: policy.sha256, outputSchemaVersion: policy.output_schema_version },
+            provider: { name: provider.name, model: provider.model },
+          },
         });
         warning = null;
-      } catch {
+      } catch (error) {
         output = null;
-        warning = "Live research failed validation; this run was stored as historical baseline only. Review the AI connection before relying on multivariate forecasting.";
+        warning = safeForecastFailure(error).message;
       }
     }
     const currentPolicy = await reconcileAnalysisPolicy({

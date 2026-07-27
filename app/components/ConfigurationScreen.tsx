@@ -44,6 +44,7 @@ import {
   removeAnalysisVariable,
 } from "../lib/analysis-skill.mjs";
 import type { AppBootstrapData, AppBrand, AppEmailRecipient, AppLocation, AppUser } from "../lib/app-data";
+import { AI_PROVIDER_DEFAULTS, normalizeAiProviderFamily, type AiProviderFamily } from "../lib/server/ai-provider-config";
 import { BrandLogo } from "./BrandLogo";
 
 type NotifyProps = { notify: (message: string) => void };
@@ -439,8 +440,32 @@ const providerMeta: Record<ProviderId, { name: string; detail: string; icon: typ
   github: { name: "GitHub Sync", detail: "Permanent ANALYSIS_SKILL.md version history.", icon: Github },
 };
 
+function providerFailureText(code: string | null | undefined): string | null {
+  if (!code) return null;
+  const messages: Record<string, string> = {
+    configuration_incomplete: "Complete the provider settings before testing.",
+    credential_missing: "Save the provider credential before testing.",
+    credential_unreadable: "Replace the saved credential and test again.",
+    unsafe_endpoint: "Use an approved public HTTPS provider URL.",
+    model_unavailable: "The exact model is not available to this API key.",
+    capability_unsupported: "The provider or model rejected its required live-search or JSON-output capability check.",
+    web_search_unavailable: "The model did not perform the required live web search.",
+    structured_output_unavailable: "The model did not return host-validatable JSON after web search.",
+    unauthorized: "The provider rejected the saved credential.",
+    forbidden: "The credential does not have permission for this operation or model.",
+    not_found: "The provider endpoint or model was not found.",
+    rate_limited: "The provider rate limit was reached.",
+    provider_unavailable: "The provider was unavailable or rejected the test.",
+    network_error: "The provider could not be reached.",
+    invalid_response: "The provider returned an incompatible response.",
+  };
+  return messages[code] || "The last provider test failed. Test again for current details.";
+}
+
 function KeysTab({ notify, appData, onDataChanged }: NotifyProps & Pick<ConfigurationScreenProps, "appData" | "onDataChanged">) {
   const [editing, setEditing] = useState<ProviderId | null>(null);
+  const [aiFamily, setAiFamily] = useState<AiProviderFamily>("openai");
+  const [customAiBaseUrl, setCustomAiBaseUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const connection = (provider: ProviderId) => appData.providerConnections.find((item) => item.provider === provider);
 
@@ -452,7 +477,7 @@ function KeysTab({ notify, appData, onDataChanged }: NotifyProps & Pick<Configur
       const fields = new FormData(event.currentTarget);
       const secret = String(fields.get("secret") || "").trim();
       const body = editing === "resend" ? { senderEmail: fields.get("senderEmail"), ...(secret ? { apiKey: secret } : {}) }
-        : editing === "ai" ? { providerName: fields.get("providerName"), modelName: fields.get("modelName"), baseUrl: fields.get("baseUrl"), ...(secret ? { apiKey: secret } : {}) }
+        : editing === "ai" ? { providerName: aiFamily, modelName: fields.get("modelName"), baseUrl: fields.get("baseUrl"), ...(secret ? { apiKey: secret } : {}) }
           : { repositoryOwner: fields.get("repositoryOwner"), repositoryName: fields.get("repositoryName"), repositoryBranch: "trunk", ...(secret ? { token: secret } : {}) };
       await apiRequest(`/api/integrations/${editing}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       setEditing(null);
@@ -465,7 +490,7 @@ function KeysTab({ notify, appData, onDataChanged }: NotifyProps & Pick<Configur
   async function test(provider: ProviderId) {
     setSubmitting(true);
     try {
-      const result = await apiRequest<{ passed: boolean; message?: string }>(`/api/integrations/${provider}/test`, { method: "POST" });
+      const result = await apiRequest<{ passed: boolean; message: string; errorCode: string | null }>(`/api/integrations/${provider}/test`, { method: "POST" });
       notify(result.message || (result.passed ? `${providerMeta[provider].name} connected.` : `${providerMeta[provider].name} needs attention.`));
       await onDataChanged();
     } catch (error) { notify(error instanceof Error ? error.message : "The connection test failed."); }
@@ -474,6 +499,14 @@ function KeysTab({ notify, appData, onDataChanged }: NotifyProps & Pick<Configur
 
   const editingConnection = editing ? connection(editing) : undefined;
   const config = editingConnection?.configuration ?? {};
+  function beginEditing(provider: ProviderId) {
+    if (provider === "ai") {
+      const aiConfig = connection("ai")?.configuration as { providerName?: unknown; baseUrl?: unknown } | null | undefined;
+      setAiFamily(normalizeAiProviderFamily(aiConfig?.providerName) ?? "openai");
+      setCustomAiBaseUrl(typeof aiConfig?.baseUrl === "string" ? aiConfig.baseUrl : "");
+    }
+    setEditing(provider);
+  }
   return <div className="config-tab-stack">
     <div className="tab-intro-row"><div><h2>Keys &amp; connections</h2><p>Supabase and Railway bootstrap the app; replaceable provider credentials can be managed here.</p></div></div>
     <div className="secure-note"><ShieldCheck size={18} /><span><strong>Write-only secrets.</strong> Saved values are encrypted on the server and are never displayed again. Only a short mask and test status are returned.</span></div>
@@ -481,17 +514,18 @@ function KeysTab({ notify, appData, onDataChanged }: NotifyProps & Pick<Configur
       {[{ name: "Supabase", detail: "Sign-in and database · managed in Railway", icon: Database }, { name: "Railway", detail: "Hosting and bootstrap secrets · managed in Railway", icon: Rocket }].map((item) => { const Icon = item.icon; return <article className="integration-card" key={item.name}><div className="integration-card-top"><span className="integration-icon"><Icon size={21} /></span><span className="status-badge status-active">Ready</span></div><div><h3>{item.name}</h3><p>{item.detail}</p></div><div className="integration-meta"><span>Deployment-managed</span><small>Never shown in browser settings</small></div></article>; })}
       {(Object.keys(providerMeta) as ProviderId[]).map((provider) => {
         const meta = providerMeta[provider]; const item = connection(provider); const Icon = meta.icon; const connected = item?.status === "connected";
-        return <article className="integration-card" key={provider}><div className="integration-card-top"><span className="integration-icon"><Icon size={21} /></span><span className={`status-badge ${connected ? "status-active" : "status-warning"}`}>{connected ? "Connected" : item?.status || "Unconfigured"}</span></div><div><h3>{meta.name}</h3><p>{meta.detail}</p></div><div className="integration-meta"><span>{item?.maskedHint ? `Credential ${item.maskedHint}` : "Credential required"}</span><small>{item?.lastTestedAt ? `Tested ${new Date(item.lastTestedAt).toLocaleString()}` : "Not tested"}</small></div><div className="integration-actions"><button type="button" className="button button-secondary" disabled={submitting || !item} onClick={() => void test(provider)}>Test</button><button type="button" className="button button-ghost" onClick={() => setEditing(provider)}>{item ? "Replace or edit" : "Connect"}</button></div></article>;
+        const failureText = providerFailureText(item?.lastErrorCode);
+        return <article className="integration-card" key={provider}><div className="integration-card-top"><span className="integration-icon"><Icon size={21} /></span><span className={`status-badge ${connected ? "status-active" : "status-warning"}`}>{connected ? "Connected" : item?.status || "Unconfigured"}</span></div><div><h3>{meta.name}</h3><p>{meta.detail}</p></div><div className="integration-meta"><span>{item?.maskedHint ? `Credential ${item.maskedHint}` : "Credential required"}</span><small>{failureText || (item?.lastTestedAt ? `Tested ${new Date(item.lastTestedAt).toLocaleString()}` : "Not tested")}</small></div>{provider === "ai" ? <p className="field-help">The capability test makes one small live web-search API call and may use provider credits.</p> : null}<div className="integration-actions"><button type="button" className="button button-secondary" disabled={submitting || !item} onClick={() => void test(provider)}>{provider === "ai" ? "Test capabilities" : "Test"}</button><button type="button" className="button button-ghost" onClick={() => beginEditing(provider)}>{item ? "Replace or edit" : "Connect"}</button></div></article>;
       })}
     </div>
 
     {editing ? <form className="drawer-card" onSubmit={save}>
       <div className="drawer-heading"><div><span className="eyebrow">Secure connection</span><h3>{providerMeta[editing].name}</h3></div><button type="button" className="icon-button" aria-label="Close connection form" onClick={() => setEditing(null)}><X size={18} /></button></div>
       {editing === "resend" ? <label>Verified From email<input name="senderEmail" required type="email" defaultValue={String(config.senderEmail || "")} placeholder="forecasts@example.com" /></label> : null}
-      {editing === "ai" ? <div className="form-grid-two"><label>Provider name<input name="providerName" required defaultValue={String(config.providerName || "")} placeholder="OpenAI" /></label><label>Model<input name="modelName" required defaultValue={String(config.modelName || "")} /></label><label className="full-field">Responses API base URL<input name="baseUrl" required type="url" defaultValue={String(config.baseUrl || "")} placeholder="https://api.openai.com/v1" /></label></div> : null}
+      {editing === "ai" ? <div className="form-grid-two"><label>AI provider<select name="providerName" required value={aiFamily} onChange={(event) => setAiFamily(event.target.value as AiProviderFamily)}>{Object.entries(AI_PROVIDER_DEFAULTS).map(([value, item]) => <option value={value} key={value}>{item.label}</option>)}</select></label><label>Model<input name="modelName" required defaultValue={String(config.modelName || "")} placeholder={AI_PROVIDER_DEFAULTS[aiFamily].modelPlaceholder} /></label><label className="full-field">API base URL<input name="baseUrl" required type="url" value={aiFamily === "responses-compatible" ? customAiBaseUrl : AI_PROVIDER_DEFAULTS[aiFamily].baseUrl} onChange={(event) => setCustomAiBaseUrl(event.target.value)} readOnly={aiFamily !== "responses-compatible"} placeholder={aiFamily === "responses-compatible" ? "https://provider.example/v1" : undefined} /></label></div> : null}
       {editing === "github" ? <div className="form-grid-two"><label>Repository owner<input name="repositoryOwner" required defaultValue={String(config.repositoryOwner || "")} placeholder="Your GitHub organization" /></label><label>Repository name<input name="repositoryName" required defaultValue={String(config.repositoryName || "")} placeholder="Your cloned repository" /></label><label>Branch<input name="repositoryBranch" readOnly value="trunk" /></label></div> : null}
       <label>{editingConnection && editing === "resend" ? "New API key (leave blank to keep the current value)" : editingConnection ? "Re-enter the credential to save these settings" : "Secret"}<input name="secret" required={!editingConnection || editing === "ai" || editing === "github"} type="password" autoComplete="off" placeholder={editing === "github" ? "Fine-grained token" : "API key"} /></label>
-      {editing === "ai" ? <p className="field-help">The base URL and API key are treated as one security binding. Changing the URL requires a new key in the same save.</p> : <p className="field-help">The old value is never returned and is replaced only by a new write-only credential.</p>}
+      {editing === "ai" ? <p className="field-help">The base URL and API key are treated as one security binding. Changing the URL requires a new key in the same save. Testing creates one small live web-search response and may use provider credits.</p> : <p className="field-help">The old value is never returned and is replaced only by a new write-only credential.</p>}
       <div className="drawer-actions"><button type="button" className="button button-secondary" onClick={() => setEditing(null)}>Cancel</button><button type="submit" className="button button-primary" disabled={submitting}><ShieldCheck size={16} /> {submitting ? "Saving…" : "Save securely"}</button></div>
     </form> : null}
   </div>;

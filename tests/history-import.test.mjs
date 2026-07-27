@@ -8,8 +8,8 @@ const brandId = "brand-1";
 const locations = [{
   id: "location-1",
   brandId,
-  name: "Harbor Avenue",
-  importCode: "harbor-avenue",
+  name: "Queen Street",
+  importCode: "queen-street",
   timeZone: "America/Toronto",
 }];
 const products = [{
@@ -35,8 +35,8 @@ function parseCsv(lines, overrides = {}) {
 test("history import accepts the exact date-only contract and identifies existing and new products", async () => {
   const result = await parseCsv([
     "date,product,location,quantity",
-    "2026-07-15,Butter Croissant,Harbor Avenue,128",
-    "2026-07-16,Blueberry Muffin,Harbor Avenue,0",
+    "2026-07-15,Butter Croissant,Queen Street,128",
+    "2026-07-16,Blueberry Muffin,Queen Street,0",
   ]);
 
   assert.equal(result.errors.length, 0);
@@ -58,13 +58,13 @@ test("history import accepts the exact date-only contract and identifies existin
 test("history import makes unknown locations resolvable while rejecting every other invalid row", async () => {
   const result = await parseCsv([
     "date,product,location,quantity",
-    "2026-07-15T08:00:00Z,Butter Croissant,Harbor Avenue,128",
+    "2026-07-15T08:00:00Z,Butter Croissant,Queen Street,128",
     "2026-07-15,Butter Croissant,Unknown Store,12",
-    "2026-07-15,Butter Croissant,Harbor Avenue,-1",
-    "2026-07-15,Butter Croissant,Harbor Avenue,1.5",
-    "2026-07-15,=HYPERLINK(\"https://bad.example\"),Harbor Avenue,4",
-    "2026-07-16,Butter Croissant,Harbor Avenue,3",
-    "2026-07-16,Butter Croissant,Harbor Avenue,4",
+    "2026-07-15,Butter Croissant,Queen Street,-1",
+    "2026-07-15,Butter Croissant,Queen Street,1.5",
+    "2026-07-15,=HYPERLINK(\"https://bad.example\"),Queen Street,4",
+    "2026-07-16,Butter Croissant,Queen Street,3",
+    "2026-07-16,Butter Croissant,Queen Street,4",
   ]);
 
   assert.equal(result.rowCount, 1);
@@ -85,7 +85,7 @@ test("history import rejects future dates using each resolved location's local b
   const boundaryInstant = new Date("2026-07-17T02:00:00Z");
   const result = await parseCsv([
     "date,product,location,quantity",
-    "2026-07-17,Butter Croissant,Harbor Avenue,12",
+    "2026-07-17,Butter Croissant,Queen Street,12",
     "2026-07-17,Butter Croissant,Tokyo Central,8",
   ], {
     allowedLocations: [
@@ -110,15 +110,15 @@ test("location and product names, codes, aliases, and explicit choices are case 
     "date,product,location,quantity",
     "2026-07-15,BUTTER   ITEM,downtown   store,11",
     "2026-07-14,legacy   cake,UNLISTED   STORE,9",
-    "2026-07-13,New Item,HARBOR-AVENUE,5",
+    "2026-07-13,New Item,QUEEN-STREET,5",
   ], {
     allowedLocations: [
       ...locations,
       {
         id: "location-2",
         brandId,
-        name: "Riverside",
-        importCode: "riverside",
+        name: "North York",
+        importCode: "north-york",
         timeZone: "America/Toronto",
       },
     ],
@@ -180,7 +180,7 @@ test("explicit choices cannot cross the selected brand", async () => {
 test("ambiguous location and product aliases are rejected until an explicit valid choice resolves them", async () => {
   const sameBrandLocations = [
     ...locations,
-    { id: "location-2", brandId, name: "Riverside", timeZone: "America/Toronto" },
+    { id: "location-2", brandId, name: "North York", timeZone: "America/Toronto" },
   ];
   const sameBrandProducts = [
     ...products,
@@ -236,7 +236,7 @@ test("ambiguous location and product aliases are rejected until an explicit vali
 test("duplicates are detected after different source labels resolve to the same location and product", async () => {
   const result = await parseCsv([
     "date,product,location,quantity",
-    "2026-07-15,Butter Croissant,Harbor Avenue,12",
+    "2026-07-15,Butter Croissant,Queen Street,12",
     "2026-07-15,Legacy Butter,Downtown Store,13",
   ], {
     locationAliases: [{ locationId: "location-1", sourceLabel: "Downtown Store" }],
@@ -251,7 +251,7 @@ test("date cells containing a time component are rejected rather than silently t
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Sales Data");
   worksheet.addRow(["date", "product", "location", "quantity"]);
-  worksheet.addRow([new Date("2026-07-15T13:30:00Z"), "Butter Croissant", "Harbor Avenue", 2]);
+  worksheet.addRow([new Date("2026-07-15T13:30:00Z"), "Butter Croissant", "Queen Street", 2]);
   const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
   const result = await parseHistoryImport({
     filename: "history.xlsx",
@@ -269,8 +269,8 @@ test("date cells containing a time component are rejected rather than silently t
 test("data rows reject every non-empty or formula cell after the four required columns", async () => {
   const result = await parseCsv([
     "date,product,location,quantity",
-    "2026-07-15,Butter Croissant,Harbor Avenue,2,unexpected",
-    "2026-07-14,Butter Croissant,Harbor Avenue,3,=HYPERLINK(\"https://bad.example\")",
+    "2026-07-15,Butter Croissant,Queen Street,2,unexpected",
+    "2026-07-14,Butter Croissant,Queen Street,3,=HYPERLINK(\"https://bad.example\")",
   ]);
 
   assert.equal(result.rowCount, 0);
@@ -282,7 +282,7 @@ test("hidden spreadsheet columns are rejected under the exact four-column contra
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("Sales Data");
   worksheet.addRow(["date", "product", "location", "quantity"]);
-  worksheet.addRow([new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Harbor Avenue", 2]);
+  worksheet.addRow([new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Queen Street", 2]);
   worksheet.getColumn(2).hidden = true;
   const bytes = Buffer.from(await workbook.xlsx.writeBuffer());
 

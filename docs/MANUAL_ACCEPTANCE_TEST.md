@@ -165,8 +165,8 @@ Open **Configuration → Keys** as an administrator.
 3. Run the Resend connection test. Confirm the safe validation request passes and no email is sent or queued.
 4. Save the GitHub owner, repository, fixed `trunk` branch, and fine-grained token. Run the test.
 5. Confirm the GitHub token is limited to this repository with only Contents read/write.
-6. Save the AI provider, exact model, Responses-compatible base URL, and API key. Run the test.
-7. Confirm the AI provider has a spending limit.
+6. Choose OpenAI, Anthropic, Google, or Responses-compatible; save the exact model and API key. Enter a custom base URL only for Responses-compatible. Run **Test capabilities**. This makes one small live-search request and can consume provider credits.
+7. Confirm the test explicitly passes the selected provider/model, live web search, and host-validatable JSON, and confirm the AI provider has a spending limit.
 8. Refresh the page. Confirm no full saved key is displayed or returned to the browser.
 
 Pass when all three configured connections show a successful test time and only masked credential hints.

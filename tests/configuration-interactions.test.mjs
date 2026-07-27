@@ -3,9 +3,20 @@ import { readFileSync, statSync } from "node:fs";
 import test from "node:test";
 
 const configuration = readFileSync("app/components/ConfigurationScreen.tsx", "utf8");
+const aiProviderConfig = readFileSync("app/lib/server/ai-provider-config.ts", "utf8");
 const dataImportGuide = readFileSync("docs/DATA_IMPORT.md", "utf8");
 const setupGuide = readFileSync("docs/SETUP.md", "utf8");
 const setupStatusRoute = readFileSync("app/api/setup/status/route.ts", "utf8");
+
+test("AI settings use an explicit provider-family selector and only custom-compatible URLs are editable", () => {
+  assert.match(configuration, /<label>AI provider<select/);
+  assert.match(configuration, /AI_PROVIDER_DEFAULTS/);
+  assert.match(aiProviderConfig, /Anthropic \(Claude\)/);
+  assert.match(aiProviderConfig, /Google \(Gemini\)/);
+  assert.match(configuration, /responses-compatible/);
+  assert.match(configuration, /readOnly=\{aiFamily !== "responses-compatible"\}/);
+  assert.doesNotMatch(configuration, /<label>Provider name<input/);
+});
 
 test("historical import requires one brand and submits its identifier", () => {
   assert.match(configuration, /Create the brand first/);

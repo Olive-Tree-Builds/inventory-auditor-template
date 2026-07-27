@@ -89,7 +89,8 @@ export function validateAnalysisSkillForGitHub(markdown: string): string[] {
     "## Mandatory execution contract",
     "## Structured output contract",
     "prompt-injection",
-    '"recommendations"',
+    '"assessments"',
+    '"adjustment_percent"',
     '"sources"',
     '"variable_id"',
   ]) {

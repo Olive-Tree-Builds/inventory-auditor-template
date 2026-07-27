@@ -22,7 +22,7 @@ Inspect the live tree before relying on this map; move or add landmarks here whe
 - Application/server: authenticates, authorizes, validates imports, scopes jobs, and calls provider adapters.
 - Supabase: stores tenant data with row-level security and server-side ownership checks.
 - Secret storage: encrypts provider credentials and exposes only status and masked hints.
-- Forecasting: loads the root analysis policy, validates scope, calculates a baseline, invokes a web-capable AI provider, validates structured output, and stores an audit trail.
+- Forecasting: loads the root analysis policy, validates scope, calculates the baseline and compact evidence on the host, asks a web-capable AI only for current-variable research, validates and applies bounded adjustments on the host, and stores an audit trail.
 - Providers: Supabase, Resend, Railway, GitHub, and AI accounts are configured through replaceable environment values or adapters.
 
 ## Core data relationships

@@ -15,10 +15,11 @@ const rootPolicy = readFileSync("ANALYSIS_SKILL.md", "utf8");
 test("the repository policy is the valid source of active variables", () => {
   const result = parseAnalysisSkill(rootPolicy);
   assert.deepEqual(result.errors, []);
-  assert.equal(result.policyVersion, "1.1.0");
+  assert.equal(result.policyVersion, "2.0.0");
   assert.equal(result.activeVariableRevision, "2");
-  assert.match(rootPolicy, /"version": "1\.1\.0"/);
-  assert.match(rootPolicy, /"output_schema_version": "1\.1"/);
+  assert.doesNotMatch(rootPolicy, /"baseline_quantity"/);
+  assert.match(rootPolicy, /"product_id": "string"/);
+  assert.match(rootPolicy, /Output schema version: `2\.0`/);
   assert.deepEqual(
     result.variables.map(({ id }) => id),
     ["weather", "holidays", "nearby-events", "school-schedules", "local-disruptions"],
@@ -69,7 +70,7 @@ test("activation advances auditable metadata after variable changes", () => {
   const prepared = prepareAnalysisSkillActivation(added.markdown, rootPolicy, "2026-07-17");
   assert.equal(prepared.error, null);
   const result = parseAnalysisSkill(prepared.markdown);
-  assert.equal(result.policyVersion, "1.1.1");
+  assert.equal(result.policyVersion, "2.0.1");
   assert.equal(result.activeVariableRevision, "3");
   assert.match(prepared.markdown, /- Last updated: `2026-07-17`/);
 });

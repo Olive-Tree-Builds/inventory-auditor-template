@@ -101,6 +101,27 @@ type ForecastData = {
   recommendations: ForecastRecommendation[];
   sources: ForecastSource[];
 };
+type ForecastFactorAssessment = {
+  productId: string;
+  productName: string;
+  percent: number;
+  relevance: string;
+  evidence: string;
+  sources: ForecastSource[];
+};
+type ForecastDecisionFactor = {
+  id: string;
+  name: string;
+  assessments: ForecastFactorAssessment[];
+};
+type ForecastDecisionBreakdown = {
+  run: ForecastRun;
+  locationName: string;
+  baseline: number;
+  recommended: number;
+  recommendations: ForecastRecommendation[];
+  factors: ForecastDecisionFactor[];
+};
 type ForecastAvailability = "ready" | "not-installed" | "setup-required";
 type ManualSendResult = { recipientsChecked: number; sent: number; skipped: number; failed: number; failureCodes: Record<string, number> };
 
@@ -174,6 +195,31 @@ function titleCase(value: string): string {
 
 function formatNumber(value: number, maximumFractionDigits = 0): string {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits }).format(value);
+}
+
+function formatSignedPercent(value: number): string {
+  if (Math.abs(value) < 0.05) return "0%";
+  return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
+}
+
+function factorEffectLabel(assessments: ForecastFactorAssessment[]): string {
+  const nonZero = assessments.map((assessment) => assessment.percent).filter((percent) => Math.abs(percent) >= 0.05);
+  if (!nonZero.length) return "No quantity change";
+  const minimum = Math.min(...nonZero);
+  const maximum = Math.max(...nonZero);
+  return Math.abs(maximum - minimum) < 0.05
+    ? formatSignedPercent(maximum)
+    : `${formatSignedPercent(minimum)} to ${formatSignedPercent(maximum)}`;
+}
+
+function decisionSummary(breakdown: ForecastDecisionBreakdown): string {
+  const difference = breakdown.recommended - breakdown.baseline;
+  const percentage = breakdown.baseline > 0 ? (difference / breakdown.baseline) * 100 : null;
+  const opening = `The plan starts with a ${formatNumber(breakdown.baseline)}-unit history-only estimate for ${breakdown.locationName}.`;
+  if (difference === 0) return `${opening} After checking every active factor, no supported change was applied, so the recommendation remains ${formatNumber(breakdown.recommended)} units.`;
+  const direction = difference > 0 ? "adds" : "removes";
+  const percentText = percentage === null ? "" : ` (${formatSignedPercent(percentage)})`;
+  return `${opening} The supported factor adjustments ${direction} ${formatNumber(Math.abs(difference))} ${Math.abs(difference) === 1 ? "unit" : "units"}${percentText}, resulting in a recommendation of ${formatNumber(breakdown.recommended)} units.`;
 }
 
 function formatDate(value: string, options?: Intl.DateTimeFormatOptions): string {
@@ -699,7 +745,7 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
   const manualSendingRef = useRef(false);
 
   const activePolicy = appData.analysisSkill;
-  const activeVariables = activePolicy?.variables ?? [];
+  const activeVariables = useMemo(() => activePolicy?.variables ?? [], [activePolicy]);
   const policyUnavailable = !activePolicy;
   const canRunForecast = appData.currentUser.role === "super_admin" || appData.currentUser.role === "admin" || appData.currentUser.role === "manager";
   const assignedIdSet = useMemo(() => new Set(appData.assignedLocationIds), [appData.assignedLocationIds]);
@@ -1005,6 +1051,44 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
     });
     return [...products.values()].sort((left, right) => right.recommended - left.recommended);
   }, [scopedForecast]);
+
+  const forecastDecisionBreakdowns = useMemo((): ForecastDecisionBreakdown[] => {
+    if (!scopedForecast) return [];
+    return scopedForecast.runs.map((run) => {
+      const recommendations = scopedForecast.recommendations.filter((recommendation) => recommendation.runId
+        ? recommendation.runId === run.id
+        : recommendation.locationId === run.locationId);
+      const sourceById = new Map(scopedForecast.sources
+        .filter((source) => !source.runId || source.runId === run.id)
+        .map((source) => [source.id, source]));
+      const factorDefinitions = new Map(activeVariables.map((variable) => [variable.id, variable.name]));
+      recommendations.forEach((recommendation) => recommendation.adjustments.forEach((adjustment) => {
+        if (adjustment.variableId && !factorDefinitions.has(adjustment.variableId)) factorDefinitions.set(adjustment.variableId, adjustment.variableName);
+      }));
+      const factors = [...factorDefinitions.entries()].map(([id, name]): ForecastDecisionFactor => ({
+        id,
+        name,
+        assessments: recommendations.flatMap((recommendation): ForecastFactorAssessment[] => recommendation.adjustments
+          .filter((adjustment) => adjustment.variableId === id)
+          .map((adjustment) => ({
+            productId: recommendation.productId,
+            productName: recommendation.productName,
+            percent: adjustment.percent,
+            relevance: adjustment.relevance,
+            evidence: adjustment.evidence,
+            sources: adjustment.sourceIds.map((sourceId) => sourceById.get(sourceId)).filter((source): source is ForecastSource => Boolean(source)),
+          }))),
+      }));
+      return {
+        run,
+        locationName: locationById.get(run.locationId)?.name ?? "Selected location",
+        baseline: recommendations.reduce((sum, recommendation) => sum + recommendation.baselineQuantity, 0),
+        recommended: recommendations.reduce((sum, recommendation) => sum + recommendation.recommendedQuantity, 0),
+        recommendations,
+        factors,
+      };
+    }).filter((breakdown) => breakdown.recommendations.length > 0);
+  }, [activeVariables, locationById, scopedForecast]);
 
   const totalRecommended = forecastProducts.reduce((sum, product) => sum + product.recommended, 0);
   const totalBaseline = forecastProducts.reduce((sum, product) => sum + product.baseline, 0);
@@ -1369,6 +1453,71 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
                 {researchCompleted ? "Research complete" : "Sales history only"} · Updated {formatDateTime(generatedAt)}{runStatuses.some((status) => status === "needs_review") ? " · Review needed" : ""}
               </div>
             </div>
+
+            <article className="forecast-decision-panel panel" aria-labelledby="forecast-decision-heading">
+              <div className="forecast-decision-heading">
+                <div>
+                  <span className="eyebrow">AI decision breakdown</span>
+                  <h3 id="forecast-decision-heading">Why these numbers?</h3>
+                  <p>See how the history-only estimate, the selected time period, and every Analysis Skill factor produced each location&apos;s recommendation.</p>
+                </div>
+                <span className="decision-cost-note"><Info size={15} aria-hidden="true" /> Uses the saved forecast—no additional AI call</span>
+              </div>
+              <div className="forecast-decision-locations">
+                {forecastDecisionBreakdowns.map((breakdown) => {
+                  const difference = breakdown.recommended - breakdown.baseline;
+                  const percentage = breakdown.baseline > 0 ? (difference / breakdown.baseline) * 100 : null;
+                  return (
+                    <section className="forecast-decision-location" key={breakdown.run.id || breakdown.run.locationId}>
+                      <div className="forecast-decision-location-heading">
+                        <div><h4>{breakdown.locationName}</h4><p>{titleCase(breakdown.run.period ?? forecastPeriod)} · {formatRange(breakdown.run.periodStart, breakdown.run.periodEnd)}</p></div>
+                        <span className={`status-badge ${breakdown.run.researchCompleted ? "status-active" : "status-warning"}`}>{breakdown.run.researchCompleted ? "AI research completed" : "History-only fallback"}</span>
+                      </div>
+                      <p className="forecast-decision-summary">{decisionSummary(breakdown)}</p>
+                      <div className="forecast-decision-math" aria-label={`Forecast calculation for ${breakdown.locationName}`}>
+                        <span><small>History-only estimate</small><strong>{formatNumber(breakdown.baseline)}</strong><em>units</em></span>
+                        <span className="forecast-math-operator" aria-hidden="true">+</span>
+                        <span><small>Factor change</small><strong className={difference < 0 ? "metric-negative" : difference > 0 ? "metric-positive" : ""}>{difference > 0 ? "+" : ""}{formatNumber(difference)}</strong><em>{percentage === null ? "No baseline" : formatSignedPercent(percentage)}</em></span>
+                        <span className="forecast-math-operator" aria-hidden="true">=</span>
+                        <span className="is-result"><small>Recommended</small><strong>{formatNumber(breakdown.recommended)}</strong><em>units</em></span>
+                      </div>
+                      <div className="forecast-factor-explanations">
+                        <h5>All factors reviewed</h5>
+                        {breakdown.factors.length ? breakdown.factors.map((factor) => {
+                          const changedProducts = new Set(factor.assessments.filter((assessment) => Math.abs(assessment.percent) >= 0.05).map((assessment) => assessment.productId)).size;
+                          const hasPositive = factor.assessments.some((assessment) => assessment.percent > 0.05);
+                          const hasNegative = factor.assessments.some((assessment) => assessment.percent < -0.05);
+                          const effectTone = hasPositive && !hasNegative ? "is-positive" : hasNegative && !hasPositive ? "is-negative" : "is-neutral";
+                          return (
+                            <details className="forecast-factor-explanation" key={factor.id}>
+                              <summary>
+                                <span><strong>{factor.name}</strong><small>{factor.assessments.length ? changedProducts ? `${changedProducts} ${changedProducts === 1 ? "product" : "products"} adjusted` : "Checked; no product adjustment" : "No saved assessment"}</small></span>
+                                <span className={`factor-effect ${effectTone}`}>{factorEffectLabel(factor.assessments)}</span>
+                                <ChevronDown size={16} aria-hidden="true" />
+                              </summary>
+                              <div className="forecast-factor-products">
+                                {factor.assessments.length ? factor.assessments.map((assessment) => (
+                                  <section className="forecast-factor-product" key={`${factor.id}-${assessment.productId}`}>
+                                    <div><strong>{assessment.productName}</strong><span className={assessment.percent < -0.05 ? "metric-negative" : assessment.percent > 0.05 ? "metric-positive" : ""}>{formatSignedPercent(assessment.percent)}</span></div>
+                                    <p><b>What the AI found:</b> {assessment.evidence || "No current evidence supported a change for this factor."}</p>
+                                    <p><b>Why it matters:</b> {assessment.relevance || "No demonstrated relationship justified changing this product&apos;s historical estimate."}</p>
+                                    {assessment.sources.length ? <div className="forecast-factor-sources"><span>Evidence:</span>{assessment.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={`${source.runId}-${source.id}`}>{source.title}{source.publisher ? ` · ${source.publisher}` : ""} <ExternalLink size={11} aria-hidden="true" /></a>)}</div> : <small className="forecast-no-source">{Math.abs(assessment.percent) < 0.05 ? "No linked source was needed or returned for this neutral assessment." : "No source link was saved; review this adjustment before acting."}</small>}
+                                  </section>
+                                )) : <p className="forecast-factor-empty">This factor did not produce a saved assessment, so the app applied no change from it.</p>}
+                              </div>
+                            </details>
+                          );
+                        }) : <p className="forecast-factor-empty">No outside factors were active for this saved run.</p>}
+                      </div>
+                      <details className="forecast-product-conclusions">
+                        <summary><span><strong>Product-by-product conclusion</strong><small>How each final quantity was reached</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
+                        <div>{breakdown.recommendations.map((recommendation) => <p key={recommendation.productId}><strong>{recommendation.productName}: {formatNumber(recommendation.baselineQuantity)} → {formatNumber(recommendation.recommendedQuantity)} units.</strong> {recommendation.explanation || "No additional explanation was saved."}</p>)}</div>
+                      </details>
+                    </section>
+                  );
+                })}
+              </div>
+            </article>
 
             <article className="forecast-table-wrap panel">
               <div className="forecast-table-heading">

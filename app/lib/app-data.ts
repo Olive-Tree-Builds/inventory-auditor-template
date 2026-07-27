@@ -54,6 +54,8 @@ export type ProviderConnectionSummary = {
   status: string;
   maskedHint: string | null;
   lastTestedAt: string | null;
+  lastTestResult: "passed" | "failed" | null;
+  lastErrorCode: string | null;
   configuration: Record<string, unknown>;
 };
 

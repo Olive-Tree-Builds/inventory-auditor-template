@@ -16,6 +16,11 @@ import {
   fingerprintSecret,
   maskSecret,
 } from "./secret-crypto";
+import {
+  AI_PROVIDER_FAMILIES,
+  normalizeAiProviderFamily,
+  type AiProviderFamily,
+} from "./ai-provider-config";
 
 export const integrationProviderSchema = z.enum(["resend", "ai", "github"]);
 export type IntegrationProvider = z.infer<typeof integrationProviderSchema>;
@@ -89,7 +94,10 @@ const secretSchema = z.string()
   .optional();
 
 const senderEmailSchema = z.string().trim().email().max(320);
-const providerNameSchema = z.string().trim().min(1).max(80);
+const providerNameSchema = z.preprocess(
+  (value) => normalizeAiProviderFamily(value) ?? value,
+  z.enum(AI_PROVIDER_FAMILIES),
+);
 const modelNameSchema = z.string().trim().min(1).max(160);
 const baseUrlSchema = z.string().trim().max(500)
   .refine(isSecureProviderUrl, "Use a public HTTPS provider URL without credentials, query text, or a fragment.")
@@ -122,7 +130,7 @@ export type ParsedProviderSaveInput =
 
 export type ProviderConfiguration =
   | { provider: "resend"; senderEmail: string }
-  | { provider: "ai"; providerName: string; modelName: string; baseUrl: string }
+  | { provider: "ai"; providerName: AiProviderFamily; modelName: string; baseUrl: string }
   | { provider: "github"; repositoryOwner: string; repositoryName: string; repositoryBranch: "trunk" };
 
 export function parseProviderSaveInput(
@@ -623,6 +631,10 @@ export type ProviderTestErrorCode =
   | "credential_missing"
   | "credential_unreadable"
   | "unsafe_endpoint"
+  | "model_unavailable"
+  | "capability_unsupported"
+  | "web_search_unavailable"
+  | "structured_output_unavailable"
   | "unauthorized"
   | "forbidden"
   | "not_found"
@@ -687,7 +699,7 @@ async function assertJsonProbe(
   fetcher: typeof fetch,
   url: string,
   credential: string,
-): Promise<void> {
+): Promise<unknown> {
   let response: Response;
   try {
     response = await timedFetcher(fetcher)(url, {
@@ -708,6 +720,291 @@ async function assertJsonProbe(
   if (!payload || typeof payload !== "object") {
     throw new ProviderConnectionTestError("invalid_response");
   }
+  return payload;
+}
+
+function responseUsedWebSearch(payload: unknown): boolean {
+  if (!payload || typeof payload !== "object") return false;
+  const output = (payload as { output?: unknown }).output;
+  return Array.isArray(output) && output.some((item) => (
+    Boolean(item) && typeof item === "object" &&
+    ["web_search_call", "web_search"].includes(String((item as { type?: unknown }).type ?? ""))
+  ));
+}
+
+function responseOutputText(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const response = payload as { output_text?: unknown; output?: unknown };
+  if (typeof response.output_text === "string") return response.output_text;
+  if (!Array.isArray(response.output)) return null;
+  const chunks: string[] = [];
+  for (const item of response.output) {
+    if (!item || typeof item !== "object") continue;
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (!part || typeof part !== "object") continue;
+      const typed = part as { type?: unknown; text?: unknown };
+      if (typed.type === "output_text" && typeof typed.text === "string") chunks.push(typed.text);
+    }
+  }
+  return chunks.length ? chunks.join("") : null;
+}
+
+function assertModelsResponse(payload: unknown): void {
+  const data = payload && typeof payload === "object" ? (payload as { data?: unknown }).data : null;
+  if (!Array.isArray(data)) throw new ProviderConnectionTestError("invalid_response");
+}
+
+const AI_CAPABILITY_PROBE_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["capability"],
+  properties: {
+    capability: { type: "string", enum: ["web_search_and_structured_output"] },
+  },
+} as const;
+
+async function assertOpenAiForecastCapabilities(
+  fetcher: typeof fetch,
+  configuration: Extract<ProviderConfiguration, { provider: "ai" }>,
+  credential: string,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await timedFetcher(fetcher, 45_000)(
+      `${configuration.baseUrl.replace(/\/+$/, "")}/responses`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${credential}`,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: configuration.modelName,
+          store: false,
+          ...(configuration.providerName === "openai" ? { reasoning: { effort: "low" } } : {}),
+          max_output_tokens: 512,
+          tools: [{ type: "web_search" }],
+          tool_choice: "required",
+          input: [
+            {
+              role: "system",
+              content: [{
+                type: "input_text",
+                text: "This is a capability check. Perform the required live web search, then return only the requested structured result.",
+              }],
+            },
+            {
+              role: "user",
+              content: [{
+                type: "input_text",
+                text: "Use web search to confirm that a current public webpage is reachable. Return the capability result after the search completes.",
+              }],
+            },
+          ],
+          text: {
+            ...(configuration.providerName === "openai" ? { verbosity: "low" } : {}),
+            format: {
+              type: "json_schema",
+              name: "inventory_auditor_capability_probe",
+              strict: true,
+              schema: AI_CAPABILITY_PROBE_SCHEMA,
+            },
+          },
+        }),
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new ProviderConnectionTestError("network_error");
+  }
+  if (!response.ok) {
+    let upstreamCode = "";
+    try {
+      const payload = await response.json() as { error?: { code?: unknown } };
+      upstreamCode = typeof payload?.error?.code === "string" ? payload.error.code : "";
+    } catch {
+      upstreamCode = "";
+    }
+    if (response.status === 404 || upstreamCode === "model_not_found") {
+      throw new ProviderConnectionTestError("model_unavailable");
+    }
+    if (response.status === 400 || response.status === 422) {
+      throw new ProviderConnectionTestError("capability_unsupported");
+    }
+    throw new ProviderConnectionTestError(responseErrorCode(response.status));
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (!responseUsedWebSearch(payload)) {
+    throw new ProviderConnectionTestError("web_search_unavailable");
+  }
+  const outputText = responseOutputText(payload);
+  if (!outputText || /^\s*```/.test(outputText)) {
+    throw new ProviderConnectionTestError("structured_output_unavailable");
+  }
+  try {
+    const parsed = JSON.parse(outputText) as { capability?: unknown };
+    if (
+      !parsed || typeof parsed !== "object" ||
+      Object.keys(parsed).length !== 1 ||
+      parsed.capability !== "web_search_and_structured_output"
+    ) throw new Error("invalid capability result");
+  } catch {
+    throw new ProviderConnectionTestError("structured_output_unavailable");
+  }
+}
+
+function capabilityJsonFromTexts(texts: string[]): boolean {
+  for (const candidate of [...texts].reverse().concat(texts.length > 1 ? [texts.join("")] : [])) {
+    try {
+      const parsed = JSON.parse(candidate.trim()) as { capability?: unknown };
+      if (
+        parsed && typeof parsed === "object" && Object.keys(parsed).length === 1 &&
+        parsed.capability === "web_search_and_structured_output"
+      ) return true;
+    } catch {
+      // Try another final text block.
+    }
+  }
+  return false;
+}
+
+function capabilityProbePrompt() {
+  return [
+    "This is a capability check.",
+    "You must perform a live web search for the current title of https://example.com.",
+    "After the search, return only this raw JSON object with no markdown: {\"capability\":\"web_search_and_structured_output\"}",
+  ].join(" ");
+}
+
+async function assertAnthropicForecastCapabilities(
+  fetcher: typeof fetch,
+  configuration: Extract<ProviderConfiguration, { provider: "ai" }>,
+  credential: string,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await timedFetcher(fetcher, 45_000)(`${configuration.baseUrl.replace(/\/+$/, "")}/messages`, {
+      method: "POST",
+      headers: {
+        "x-api-key": credential,
+        "anthropic-version": "2023-06-01",
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: configuration.modelName,
+        max_tokens: 512,
+        messages: [{ role: "user", content: capabilityProbePrompt() }],
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 1, allowed_callers: ["direct"] }],
+      }),
+      cache: "no-store",
+    });
+  } catch {
+    throw new ProviderConnectionTestError("network_error");
+  }
+  if (!response.ok) {
+    if (response.status === 404) throw new ProviderConnectionTestError("model_unavailable");
+    if (response.status === 400 || response.status === 422) throw new ProviderConnectionTestError("capability_unsupported");
+    throw new ProviderConnectionTestError(responseErrorCode(response.status));
+  }
+  const payload: unknown = await response.json().catch(() => null);
+  const content = payload && typeof payload === "object" ? (payload as { content?: unknown }).content : null;
+  if (!Array.isArray(content)) throw new ProviderConnectionTestError("invalid_response");
+  const searched = content.some((block) => (
+    Boolean(block) && typeof block === "object" &&
+    (block as { type?: unknown }).type === "server_tool_use" &&
+    (block as { name?: unknown }).name === "web_search"
+  ));
+  if (!searched) throw new ProviderConnectionTestError("web_search_unavailable");
+  const texts = content.flatMap((block) => (
+    block && typeof block === "object" && (block as { type?: unknown }).type === "text" && typeof (block as { text?: unknown }).text === "string"
+      ? [String((block as { text: string }).text)]
+      : []
+  ));
+  if (!capabilityJsonFromTexts(texts)) throw new ProviderConnectionTestError("structured_output_unavailable");
+}
+
+async function assertGoogleForecastCapabilities(
+  fetcher: typeof fetch,
+  configuration: Extract<ProviderConfiguration, { provider: "ai" }>,
+  credential: string,
+): Promise<void> {
+  const model = configuration.modelName.replace(/^models\//, "");
+  let response: Response;
+  try {
+    response = await timedFetcher(fetcher, 45_000)(
+      `${configuration.baseUrl.replace(/\/+$/, "")}/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: "POST",
+        headers: {
+          "x-goog-api-key": credential,
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: capabilityProbePrompt() }] }],
+          tools: [{ googleSearch: {} }],
+        }),
+        cache: "no-store",
+      },
+    );
+  } catch {
+    throw new ProviderConnectionTestError("network_error");
+  }
+  if (!response.ok) {
+    if (response.status === 404) throw new ProviderConnectionTestError("model_unavailable");
+    if (response.status === 400 || response.status === 422) throw new ProviderConnectionTestError("capability_unsupported");
+    throw new ProviderConnectionTestError(responseErrorCode(response.status));
+  }
+  const payload: unknown = await response.json().catch(() => null);
+  const candidates = payload && typeof payload === "object" ? (payload as { candidates?: unknown }).candidates : null;
+  if (!Array.isArray(candidates)) throw new ProviderConnectionTestError("invalid_response");
+  const searched = candidates.some((candidate) => {
+    if (!candidate || typeof candidate !== "object") return false;
+    const metadata = (candidate as { groundingMetadata?: unknown }).groundingMetadata;
+    if (!metadata || typeof metadata !== "object") return false;
+    const typed = metadata as { webSearchQueries?: unknown; groundingChunks?: unknown };
+    return (Array.isArray(typed.webSearchQueries) && typed.webSearchQueries.length > 0) ||
+      (Array.isArray(typed.groundingChunks) && typed.groundingChunks.length > 0);
+  });
+  if (!searched) throw new ProviderConnectionTestError("web_search_unavailable");
+  const texts = candidates.flatMap((candidate) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const content = (candidate as { content?: unknown }).content;
+    const parts = content && typeof content === "object" ? (content as { parts?: unknown }).parts : null;
+    if (!Array.isArray(parts)) return [];
+    return parts.flatMap((part) => (
+      part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+        ? [String((part as { text: string }).text)]
+        : []
+    ));
+  });
+  if (!capabilityJsonFromTexts(texts)) throw new ProviderConnectionTestError("structured_output_unavailable");
+}
+
+async function assertAiForecastCapabilities(
+  fetcher: typeof fetch,
+  configuration: Extract<ProviderConfiguration, { provider: "ai" }>,
+  credential: string,
+): Promise<void> {
+  if (configuration.providerName === "anthropic") {
+    await assertAnthropicForecastCapabilities(fetcher, configuration, credential);
+    return;
+  }
+  if (configuration.providerName === "google") {
+    await assertGoogleForecastCapabilities(fetcher, configuration, credential);
+    return;
+  }
+  await assertOpenAiForecastCapabilities(fetcher, configuration, credential);
 }
 
 /**
@@ -762,7 +1059,7 @@ async function assertResendSendingCredential(
   }
 }
 
-/** Non-destructive provider probes. No email is sent and no AI generation is created. */
+/** Provider probes. No email is sent; the AI probe creates one small live research response. */
 export async function testProviderConnection(input: {
   configuration: ProviderConfiguration;
   credential: string;
@@ -779,11 +1076,18 @@ export async function testProviderConnection(input: {
       input.configuration.baseUrl,
       input.resolveHost ?? resolveProviderHost,
     );
-    await assertJsonProbe(
-      fetcher,
-      `${input.configuration.baseUrl.replace(/\/+$/, "")}/models`,
-      input.credential,
-    );
+    if (input.configuration.providerName === "openai" || input.configuration.providerName === "responses-compatible") {
+      const models = await assertJsonProbe(
+        fetcher,
+        `${input.configuration.baseUrl.replace(/\/+$/, "")}/models`,
+        input.credential,
+      );
+      // Provider model lists do not consistently enumerate aliases. The
+      // capability request below uses the exact configured model and is the
+      // authoritative availability check.
+      assertModelsResponse(models);
+    }
+    await assertAiForecastCapabilities(fetcher, input.configuration, input.credential);
     return;
   }
 
@@ -812,6 +1116,38 @@ function testFailureCode(error: unknown): ProviderTestErrorCode | null {
     return "configuration_incomplete";
   }
   return null;
+}
+
+export function providerTestFailureMessage(code: ProviderTestErrorCode): string {
+  switch (code) {
+    case "configuration_incomplete": return "Complete the provider settings before testing.";
+    case "credential_missing": return "Enter and save the provider credential before testing.";
+    case "credential_unreadable": return "The saved credential could not be decrypted. Replace it and test again.";
+    case "unsafe_endpoint": return "The provider URL did not resolve to an approved public HTTPS endpoint.";
+    case "model_unavailable": return "The exact model name is not available to this API key. Check the model name and account access.";
+    case "capability_unsupported": return "The selected provider or model rejected its required live-search or JSON-output capability check.";
+    case "web_search_unavailable": return "The selected model returned a response without performing the required live web search.";
+    case "structured_output_unavailable": return "The selected model did not return JSON that passed the app's server-side validator after web search.";
+    case "unauthorized": return "The provider rejected the saved credential. Replace it and test again.";
+    case "forbidden": return "The credential is valid but does not have permission for this provider operation or model.";
+    case "not_found": return "The configured provider endpoint or model was not found.";
+    case "rate_limited": return "The provider rate limit was reached. Wait and test again, or review the account limit.";
+    case "provider_unavailable": return "The provider was unavailable or rejected the capability check.";
+    case "network_error": return "The provider could not be reached. Check the base URL and internet connection.";
+    case "invalid_response": return "The provider returned an incompatible response.";
+  }
+}
+
+function providerTestResultMessage(
+  provider: IntegrationProvider,
+  errorCode: ProviderTestErrorCode | null,
+): string {
+  if (errorCode) return providerTestFailureMessage(errorCode);
+  if (provider === "ai") {
+    return "AI capabilities verified: the selected provider completed live web search and returned host-validatable JSON.";
+  }
+  if (provider === "resend") return "Resend credential verified. No email was sent.";
+  return "GitHub access verified against the configured ANALYSIS_SKILL.md file.";
 }
 
 export type IntegrationServiceDependencies = {
@@ -904,6 +1240,7 @@ export class IntegrationConnectionService {
   }): Promise<{
     passed: boolean;
     errorCode: ProviderTestErrorCode | null;
+    message: string;
     connection: PublicProviderConnection;
   }> {
     const rows = await this.dependencies.repository.list(input.workspaceId);
@@ -960,6 +1297,7 @@ export class IntegrationConnectionService {
     return {
       passed,
       errorCode,
+      message: providerTestResultMessage(input.provider, errorCode),
       connection: summary.find((connection) => connection.provider === input.provider)!,
     };
   }

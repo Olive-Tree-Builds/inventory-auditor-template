@@ -8,12 +8,13 @@ Use this reference for any change to forecasting, AI calls, analysis prompts, re
 2. Read the complete root policy from the authoritative repository revision.
 3. Record its version and host-computed checksum.
 4. Validate date-only historical inputs and requested scope.
-5. Calculate and retain the historical baseline.
-6. Ask a compatible AI provider to perform live research for the approved location and dates.
-7. Apply only evidence-backed adjustments, with relevance and confidence.
-8. Validate the structured result against the policy schema.
-9. Store recommendations, direct source URLs, warnings, provider/model metadata, and audit identifiers.
-10. Scope dashboard display and combined email output to each user's active location assignments.
+5. Calculate and retain the historical baseline and compact checksummed evidence on the host.
+6. Send the AI only the authorized location/product scope, active variables, and compact evidence—never the raw history table.
+7. Ask a compatible AI provider to perform live research for the approved location and dates and return research assessments only.
+8. Reject incomplete, out-of-scope, uncited, or over-limit research; apply validated adjustments and final arithmetic on the host.
+9. Validate the host-assembled forecast against the storage schema.
+10. Store recommendations, direct source URLs, warnings, provider/model metadata, and audit identifiers.
+11. Scope dashboard display and combined email output to each user's active location assignments.
 
 Do not let an AI response authorize itself, choose a broader scope, read secrets, or bypass server validation.
 
@@ -57,7 +58,7 @@ Avoid vague rules such as “events increase demand by 20%.” They lack locatio
 ## Failure behavior
 
 - Missing/unreadable policy: stop with `policy_unavailable`.
-- No web-capable provider: return `baseline_only`; do not claim multivariate completion.
+- No web-capable provider: store the host baseline with an explicit warning; do not claim multivariate completion.
 - Weak or conflicting evidence: zero adjustment, reduced confidence, warning.
 - Malformed or unsupported AI output: reject it; never email an unvalidated recommendation.
 - Access mismatch: deny before any research or analysis and do not reveal whether unauthorized data exists.

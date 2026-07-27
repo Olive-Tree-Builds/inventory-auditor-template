@@ -137,7 +137,7 @@ The basic app is now working. Open an optional section below only for a feature 
 
 ### Multivariate forecasting
 
-Forecasting needs a GitHub token and a compatible AI API. The AI reads the active `ANALYSIS_SKILL.md`, researches only the variables defined there, and returns recommendations with source links.
+Forecasting needs a GitHub token and a compatible AI API. The app calculates and condenses the sales history locally. The AI reads the active `ANALYSIS_SKILL.md` and researches only the variables defined there; the app validates those sourced assessments and calculates the final recommendations itself.
 
 ### Connect GitHub
 
@@ -153,11 +153,13 @@ Forecasting needs a GitHub token and a compatible AI API. The AI reads the activ
 
 ### Connect the AI provider
 
-The provider must offer a Responses-compatible API with `GET /models`, `POST /responses`, live `web_search`, structured output, and direct source URLs. Set an approved spending limit before creating the key.
+Choose **OpenAI**, **Anthropic (Claude)**, **Google (Gemini)**, or an explicitly **OpenAI Responses-compatible** service. The app uses the selected provider's real authentication, endpoint, live-search tool, and response shape; changing the label does not pretend one API is another. The exact model must support that provider's live web-search feature and source URLs. Set an approved spending limit before creating the key. The capability test makes one small live-search request, so it can consume provider credits.
+
+For the first test, choose a lower-cost model that the provider currently documents as supporting live web search. The capability test will confirm whether the exact model and account access are compatible. Native OpenAI forecasts request low reasoning effort, and live-research runs may take up to five minutes.
 
 1. Create the provider account and API key.
-2. In **Configuration → Keys → AI Analysis**, enter the provider name, exact model name, HTTPS base URL ending before `/responses`, and API key.
-3. Select **Save securely**, then **Test**.
+2. In **Configuration → Keys → AI Analysis**, choose the provider, enter the exact API model name, and paste that provider's API key. The official base URL is filled automatically. Enter a base URL yourself only for the Responses-compatible option.
+3. Select **Save securely**, then **Test capabilities**. A pass means the selected provider/model completed live search and returned JSON that passed the app's server-side validator.
 4. Open **Configuration → Analysis Skill**, read the active variables, and select **Save and activate**.
 5. Open **Dashboard**, select one location and **Day**, then run one forecast with test data.
 6. Confirm the recommendation has whole-number quantities, confidence information, and direct source links.
@@ -445,8 +447,8 @@ PHASE 6 — GITHUB ANALYSIS SKILL AND AI FORECASTING
 2. Connect GitHub Sync under Configuration → Keys using my repository owner, inventory-auditor, trunk, and the token. Save and Test. Verify the app can read root ANALYSIS_SKILL.md.
 3. First check whether my organization already has an approved AI API-platform project and a suitable app-specific credential. A ChatGPT or Codex subscription, Codex sign-in, or AI plugin connection does not count as runtime API access and must not be copied into the app. Reuse an existing approved API account for setup when possible, but have me create or enter the restricted runtime key directly.
 4. Do not pick an AI provider or model by guessing. Ask which organization-approved provider and maximum budget I authorize. If none is selected, research current compatible options only from official provider documentation, explain the choices, current official unit pricing, estimated test cost, and a proposed hard maximum budget or cap, then wait for my decision.
-5. Verify the selected provider exposes GET /models and POST /responses, and that the selected model supports live web_search, strict structured output, and direct source URLs.
-6. Set the approved spending limit before creating or using an AI key. Before the key is created or revealed, hand browser control to me and follow the secret-handling rule above. Have me enter the provider name, exact model, HTTPS API base URL ending before /responses, and API key directly under Configuration → Keys → AI Analysis, hide the key, and reply `done` before you resume.
+5. Verify the selected model supports its provider's live-search tool and direct source URLs. Use the native OpenAI Responses adapter, Anthropic Messages adapter, Google Gemini adapter, or the explicitly Responses-compatible adapter as selected in the app; do not substitute one provider's request format for another.
+6. Set the approved spending limit before creating or using an AI key. Before the key is created or revealed, hand browser control to me and follow the secret-handling rule above. Have me choose the provider and enter the exact model and API key directly under Configuration → Keys → AI Analysis, hide the key, and reply `done` before you resume. The app fills official base URLs automatically; a custom URL is required only for Responses-compatible services.
 7. Save and Test the connection. A model-list test alone is not full forecast proof.
 8. Open Configuration → Analysis Skill. Read and validate the entire repository-backed ANALYSIS_SKILL.md. Explain its active variables in plain language. Do not change them unless I request a specific change.
 9. Select Save and activate only after the exact repository version is reviewed.

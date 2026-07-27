@@ -179,6 +179,8 @@ export async function GET() {
         status: connection.status,
         maskedHint: connection.maskedHint,
         lastTestedAt: connection.lastTestedAt,
+        lastTestResult: connection.lastTestResult,
+        lastErrorCode: connection.lastErrorCode,
         configuration: connection.configuration ?? {},
       })),
       emailSchedule: schedule ? {

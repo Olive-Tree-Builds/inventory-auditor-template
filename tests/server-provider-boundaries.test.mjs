@@ -11,14 +11,20 @@ mkdirSync(workDirectory, { recursive: true });
 const compiledDirectory = mkdtempSync(join(workDirectory, "server-provider-tests-"));
 const moduleNames = [
   "analysis-policy",
+  "ai-provider-config",
+  "ai-forecast-provider",
   "credential-resolver",
   "email-delivery",
   "env",
   "forecast-claims",
+  "forecast-failure",
+  "forecast-evidence",
   "forecast-output",
   "forecast-provider",
+  "forecast-research",
   "github-analysis-skill",
   "integration-connections",
+  "native-forecast-providers",
   "openai-responses-forecast",
   "owner-setup",
   "resend-email",
@@ -64,18 +70,42 @@ const exactForecastScope = {
   timeZone: "America/Toronto",
   locations: [{
     id: "location-1",
-    name: "Harbor Avenue",
+    name: "Queen Street",
     brandId: "brand-1",
     brandName: "Test Brand",
     timeZone: "America/Toronto",
-    streetAddress: "100 Harbor Avenue",
-    city: "Example City",
-    region: "Example Region",
-    postalCode: "00000",
-    countryCode: "US",
-    researchArea: "100 Harbor Avenue, Example City, Example Region, 00000, US",
+    streetAddress: "100 Queen Street West",
+    city: "Toronto",
+    region: "Ontario",
+    postalCode: "M5H 2N2",
+    countryCode: "CA",
+    researchArea: "100 Queen Street West, Toronto, Ontario, M5H 2N2, CA",
   }],
 };
+
+const forecastTestBaseline = {
+  locationId: "location-1",
+  productId: "product-1",
+  product: "Croissant",
+  quantity: 100,
+  method: "same weekday",
+  sampleSize: 8,
+  confidence: "high",
+};
+
+function forecastTestEvidence() {
+  return server.buildForecastEvidence({
+    historicalRows: [{ date: "2026-07-10", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100 }],
+    baselines: [forecastTestBaseline],
+    locations: ["location-1"],
+    products: [{ id: "product-1", name: "Croissant" }],
+    grouping: "day",
+    forecastStartDate: "2026-07-17",
+    forecastEndDate: "2026-07-17",
+    historyStartDate: "2026-01-01",
+    historyEndDate: "2026-07-16",
+  });
+}
 
 after(() => rmSync(compiledDirectory, { recursive: true, force: true }));
 
@@ -202,7 +232,7 @@ test("GitHub Analysis Skill updates use blob-SHA compare-and-swap and verify the
   const oldSha = "a".repeat(40);
   const newSha = "b".repeat(40);
   const commitSha = "c".repeat(40);
-  const updatedPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.1.1`");
+  const updatedPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `2.0.1`");
   const calls = [];
   let getCount = 0;
   const fetcher = async (url, init) => {
@@ -342,7 +372,7 @@ test("forecast policy reconciliation reads GitHub on every run and reuses only a
 });
 
 test("forecast policy reconciliation fails closed on a repository mismatch without an administrator actor", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.0.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin, rpcCalls } = fakeAnalysisPolicyAdmin(existing);
   await assert.rejects(
@@ -358,7 +388,7 @@ test("forecast policy reconciliation fails closed on a repository mismatch witho
 });
 
 test("forecast policy reconciliation activates and read-verifies the repository revision with an explicit admin actor", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.0.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin, rpcCalls } = fakeAnalysisPolicyAdmin(existing);
   let reads = 0;
@@ -380,8 +410,8 @@ test("forecast policy reconciliation activates and read-verifies the repository 
 });
 
 test("forecast policy reconciliation never uses a document that changes during activation", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.0.0`");
-  const changedPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.1.1`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
+  const changedPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `2.0.1`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin } = fakeAnalysisPolicyAdmin(existing);
   let reads = 0;
@@ -404,7 +434,7 @@ test("forecast policy reconciliation never uses a document that changes during a
 });
 
 test("forecast policy reconciliation rejects an activation that lost the database active-state race", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `1.1.0`", "- Policy version: `1.0.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin } = fakeAnalysisPolicyAdmin(existing, { activateState: false });
   await assert.rejects(
@@ -525,6 +555,7 @@ test("Responses-compatible forecasting adapter enables web search and strict str
     apiKey: "ai-secret",
     model: "web-model",
     baseUrl: "https://api.example.com/v1",
+    providerName: "openai",
     resolveHost: async () => ["93.184.216.34"],
     fetch: async (url, init) => {
       captured = { url, init };
@@ -542,18 +573,133 @@ test("Responses-compatible forecasting adapter enables web search and strict str
     period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
     products: [{ id: "product-1", name: "Croissant" }],
     activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
-    historicalRows: [{ date: "2026-07-10", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100 }],
-    baselines: [{ locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100, method: "same weekday", sampleSize: 8, confidence: "high" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
   });
   assert.deepEqual(output, { ok: true });
   assert.equal(String(captured.url), "https://api.example.com/v1/responses");
   const body = JSON.parse(captured.init.body);
   assert.deepEqual(body.tools, [{ type: "web_search" }]);
+  assert.equal(body.tool_choice, "required");
   assert.equal(body.text.format.type, "json_schema");
+  assert.equal(body.text.format.name, "inventory_auditor_research");
   assert.equal(body.text.format.strict, true);
+  assert.doesNotMatch(JSON.stringify(body.text.format.schema), /uniqueItems|minItems|maxItems/);
   assert.equal(body.store, false);
+  assert.deepEqual(body.reasoning, { effort: "low" });
+  assert.equal(body.text.verbosity, "low");
+  assert.equal(body.max_output_tokens, 2_500);
   assert.match(body.input[0].content[0].text, /ANALYSIS_SKILL/);
-  assert.deepEqual(body.input[1].content[0].text.includes("100 Harbor Avenue, Example City, Example Region, 00000, US"), true);
+  assert.deepEqual(body.input[1].content[0].text.includes("100 Queen Street West, Toronto, Ontario, M5H 2N2, CA"), true);
+  assert.match(body.input[1].content[0].text, /historical_evidence/);
+  assert.doesNotMatch(body.input[1].content[0].text, /historical_rows/);
+});
+
+test("forecast timeouts are distinct, actionable, and do not expose transport details", async () => {
+  const provider = new server.OpenAIResponsesForecastProvider({
+    apiKey: "ai-secret",
+    model: "web-model",
+    baseUrl: "https://api.example.com/v1",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async () => { throw new DOMException("private transport detail", "TimeoutError"); },
+  });
+  const request = {
+    requestId: "run-1",
+    analysisPolicy: rootPolicy,
+    policySha256: "d".repeat(64),
+    scope: structuredClone(exactForecastScope),
+    period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
+    products: [{ id: "product-1", name: "Croissant" }],
+    activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
+  };
+  let timeoutError;
+  try {
+    await provider.generate(request);
+  } catch (error) {
+    timeoutError = error;
+  }
+  assert.equal(timeoutError.code, "request_timeout");
+  assert.equal(timeoutError.status, 408);
+  assert.doesNotMatch(timeoutError.message, /private transport detail/);
+  assert.deepEqual(server.safeForecastFailure(timeoutError), {
+    code: "ai_request_timed_out",
+    message: "Live research did not finish within five minutes. Choose one location and a lower-latency compatible model, then run the forecast again.",
+  });
+});
+
+test("provider factory uses Anthropic Messages authentication, search, and host-validated JSON", async () => {
+  let captured;
+  const provider = server.createForecastProvider({
+    providerFamily: "anthropic",
+    apiKey: "anthropic-secret",
+    model: "claude-web-model",
+    baseUrl: "https://api.anthropic.com/v1",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async (url, init) => {
+      captured = { url, init };
+      return Response.json({ content: [
+        { type: "server_tool_use", name: "web_search", id: "search-1", input: { query: "Toronto weather" } },
+        { type: "web_search_tool_result", tool_use_id: "search-1", content: [] },
+        { type: "text", text: '{"ok":true}' },
+      ] });
+    },
+  });
+  const output = await provider.generate({
+    requestId: "run-1",
+    analysisPolicy: rootPolicy,
+    policySha256: "d".repeat(64),
+    scope: structuredClone(exactForecastScope),
+    period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
+    products: [{ id: "product-1", name: "Croissant" }],
+    activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
+  });
+  assert.deepEqual(output, { ok: true });
+  assert.equal(String(captured.url), "https://api.anthropic.com/v1/messages");
+  assert.equal(captured.init.headers["x-api-key"], "anthropic-secret");
+  assert.equal(captured.init.headers["anthropic-version"], "2023-06-01");
+  const body = JSON.parse(captured.init.body);
+  assert.equal(body.tools[0].type, "web_search_20250305");
+  assert.deepEqual(body.tools[0].allowed_callers, ["direct"]);
+  assert.match(body.system, /host will reject any output/);
+});
+
+test("provider factory uses Gemini generateContent authentication, Google Search, and grounding evidence", async () => {
+  let captured;
+  const provider = server.createForecastProvider({
+    providerFamily: "google",
+    apiKey: "google-secret",
+    model: "gemini-web-model",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async (url, init) => {
+      captured = { url, init };
+      return Response.json({ candidates: [{
+        groundingMetadata: { webSearchQueries: ["Toronto weather"] },
+        content: { parts: [{ text: '{"ok":true}' }] },
+      }] });
+    },
+  });
+  const output = await provider.generate({
+    requestId: "run-1",
+    analysisPolicy: rootPolicy,
+    policySha256: "d".repeat(64),
+    scope: structuredClone(exactForecastScope),
+    period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
+    products: [{ id: "product-1", name: "Croissant" }],
+    activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
+  });
+  assert.deepEqual(output, { ok: true });
+  assert.equal(String(captured.url), "https://generativelanguage.googleapis.com/v1beta/models/gemini-web-model:generateContent");
+  assert.equal(captured.init.headers["x-goog-api-key"], "google-secret");
+  const body = JSON.parse(captured.init.body);
+  assert.deepEqual(body.tools, [{ googleSearch: {} }]);
+  assert.match(body.systemInstruction.parts[0].text, /host will reject any output/);
 });
 
 test("forecast provider rechecks DNS immediately before paid requests", async () => {
@@ -576,13 +722,13 @@ test("forecast provider rechecks DNS immediately before paid requests", async ()
     period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
     products: [{ id: "product-1", name: "Croissant" }],
     activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
-    historicalRows: [{ date: "2026-07-10", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100 }],
-    baselines: [{ locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100, method: "same weekday", sampleSize: 8, confidence: "high" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
   }), { code: "provider_failed" });
   assert.equal(calls, 0);
 });
 
-test("forecast provider rejects an out-of-scope historical row before any external call", async () => {
+test("forecast provider rejects out-of-scope historical evidence before any external call", async () => {
   let calls = 0;
   const provider = new server.OpenAIResponsesForecastProvider({
     apiKey: "ai-secret",
@@ -602,8 +748,12 @@ test("forecast provider rejects an out-of-scope historical row before any extern
       period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
       products: [{ id: "product-1", name: "Croissant" }],
       activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
-      historicalRows: [{ date: "2026-07-10", locationId: "location-2", productId: "product-1", product: "Croissant", quantity: 100 }],
-      baselines: [{ locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100, method: "same weekday", sampleSize: 8, confidence: "high" }],
+      historicalEvidence: (() => {
+        const evidence = forecastTestEvidence();
+        evidence.products[0].locationId = "location-2";
+        return evidence;
+      })(),
+      baselines: [forecastTestBaseline],
     }),
     { code: "invalid_request" },
   );
@@ -622,7 +772,7 @@ test("forecast provider rejects widened or mismatched location research scope be
     },
   });
   const scope = structuredClone(exactForecastScope);
-  scope.locations[0].researchArea = "All of Example Region";
+  scope.locations[0].researchArea = "All of Ontario";
   await assert.rejects(
     provider.generate({
       requestId: "run-1",
@@ -632,12 +782,40 @@ test("forecast provider rejects widened or mismatched location research scope be
       period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
       products: [{ id: "product-1", name: "Croissant" }],
       activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
-      historicalRows: [{ date: "2026-07-10", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100 }],
-      baselines: [{ locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100, method: "same weekday", sampleSize: 8, confidence: "high" }],
+      historicalEvidence: forecastTestEvidence(),
+      baselines: [forecastTestBaseline],
     }),
     { code: "invalid_request" },
   );
   assert.equal(calls, 0);
+});
+
+test("host evidence condenses a two-year history into deterministic checksummed metrics", () => {
+  const input = {
+    historicalRows: [
+      { date: "2024-07-17", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 80 },
+      { date: "2025-07-17", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 90 },
+      { date: "2026-07-16", locationId: "location-1", productId: "product-1", product: "Croissant", quantity: 100 },
+    ],
+    baselines: [forecastTestBaseline],
+    locations: ["location-1"],
+    products: [{ id: "product-1", name: "Croissant" }],
+    grouping: "day",
+    forecastStartDate: "2026-07-17",
+    forecastEndDate: "2026-07-17",
+    historyStartDate: "2024-07-17",
+    historyEndDate: "2026-07-16",
+  };
+  const first = server.buildForecastEvidence(input);
+  const second = server.buildForecastEvidence(input);
+  assert.equal(first.sha256, second.sha256);
+  assert.equal(server.verifyForecastEvidenceChecksum(first), true);
+  assert.equal(first.history.rowsUsed, 3);
+  assert.ok(first.products[0].representativeDailySeries.length <= 90);
+  assert.ok(first.products[0].weekdayProfile.length === 7);
+  const tampered = structuredClone(first);
+  tampered.products[0].baseline.quantity += 1;
+  assert.equal(server.verifyForecastEvidenceChecksum(tampered), false);
 });
 
 const validationContext = {
@@ -695,6 +873,59 @@ const validForecast = {
   audit: { run_id: "run-1", generated_at: "2026-07-16T20:01:00.000Z", ai_provider: "openai-responses", ai_model: "web-model" },
 };
 
+const validResearch = {
+  status: "complete",
+  assessments: [{
+    location_id: "location-1",
+    product_id: "product-1",
+    variable_id: "weather",
+    direction: "increase",
+    adjustment_percent: 10,
+    confidence: "medium",
+    relevance: "The forecast condition overlaps the exact location and date.",
+    evidence: "A current official forecast supports a modest demand adjustment.",
+    source_ids: ["source-1"],
+  }],
+  sources: [{
+    id: "source-1",
+    title: "Official forecast",
+    publisher: "Official Weather Agency",
+    url: "https://weather.example.gov/forecast/location-1",
+    published_or_updated_date: "2026-07-16",
+    fact_used: "The relevant condition overlaps the requested location and date.",
+  }],
+  warnings: [],
+};
+
+test("the host validates AI research and owns final forecast arithmetic", () => {
+  const result = server.assembleForecastOutputFromResearch({
+    rawResearch: structuredClone(validResearch),
+    context: validationContext,
+    baselines: [forecastTestBaseline],
+    activeVariables: validationContext.activeVariables,
+    dataQualityIssues: ["Sparse dates were kept missing rather than converted to zero."],
+  });
+  assert.equal(result.recommendations[0].baseline_quantity, 100);
+  assert.equal(result.recommendations[0].recommended_quantity, 110);
+  assert.equal(result.recommendations[0].confidence, "medium");
+  assert.match(result.recommendations[0].explanation, /server applied \+10%/i);
+  assert.equal(result.sources[0].accessed_at, validationContext.serverTimestamp);
+  assert.deepEqual(result.data_quality.issues, ["Sparse dates were kept missing rather than converted to zero."]);
+
+  const overLimit = structuredClone(validResearch);
+  overLimit.assessments[0].adjustment_percent = 26;
+  assert.throws(
+    () => server.assembleForecastOutputFromResearch({
+      rawResearch: overLimit,
+      context: validationContext,
+      baselines: [forecastTestBaseline],
+      activeVariables: validationContext.activeVariables,
+      dataQualityIssues: [],
+    }),
+    (error) => error.issues.some((issue) => issue.includes("factor cap")),
+  );
+});
+
 test("forecast output validation accepts a reconciled, cited, exactly scoped result", () => {
   const result = server.validateForecastOutput(structuredClone(validForecast), validationContext);
   assert.equal(result.recommendations[0].recommended_quantity, 110);
@@ -736,6 +967,91 @@ test("forecast output validation denies cross-location, cross-product, inactive-
       (error) => error.code === undefined && error.issues.some((issue) => issue.includes(expectedIssue)),
     );
   }
+});
+
+test("forecast failures become specific safe warnings without exposing provider content", () => {
+  const webSearchFailure = server.safeForecastFailure(new server.ForecastProviderError(
+    "web_search_unavailable",
+    "upstream-private-detail",
+  ));
+  assert.equal(webSearchFailure.code, "ai_web_search_not_used");
+  assert.match(webSearchFailure.message, /did not perform .*required web search/i);
+  assert.doesNotMatch(webSearchFailure.message, /upstream-private-detail/);
+
+  const quotaFailure = server.safeForecastFailure(new server.ForecastProviderError(
+    "quota_unavailable",
+    "upstream-private-billing-detail",
+    429,
+  ));
+  assert.equal(quotaFailure.code, "ai_quota_unavailable");
+  assert.match(quotaFailure.message, /API quota or billing allowance/i);
+  assert.doesNotMatch(quotaFailure.message, /upstream-private-billing-detail/);
+
+  const rateFailure = server.safeForecastFailure(new server.ForecastProviderError(
+    "rate_limited",
+    "upstream-private-rate-detail",
+    429,
+  ));
+  assert.equal(rateFailure.code, "ai_rate_limited");
+  assert.match(rateFailure.message, /Choose one location/i);
+  assert.doesNotMatch(rateFailure.message, /upstream-private-rate-detail/);
+
+  const invalidSource = structuredClone(validForecast);
+  invalidSource.sources[0].url = "https://www.google.com/search?q=weather";
+  let validationError;
+  try {
+    server.validateForecastOutput(invalidSource, validationContext);
+  } catch (error) {
+    validationError = error;
+  }
+  const sourceFailure = server.safeForecastFailure(validationError);
+  assert.equal(sourceFailure.code, "ai_source_validation_failed");
+  assert.match(sourceFailure.message, /evidence sources/i);
+
+  const uncitedResearch = structuredClone(validResearch);
+  uncitedResearch.assessments[0].source_ids = [];
+  let researchError;
+  try {
+    server.validateForecastResearchOutput(uncitedResearch, {
+      locationIds: validationContext.locationIds,
+      products: validationContext.products,
+      activeVariables: validationContext.activeVariables,
+    });
+  } catch (error) {
+    researchError = error;
+  }
+  const researchFailure = server.safeForecastFailure(researchError);
+  assert.equal(researchFailure.code, "ai_source_validation_failed");
+});
+
+test("forecast provider distinguishes depleted quota from request rate limits without exposing provider messages", async () => {
+  const request = {
+    requestId: "run-1",
+    analysisPolicy: rootPolicy,
+    policySha256: "d".repeat(64),
+    scope: structuredClone(exactForecastScope),
+    period: { grouping: "day", startDate: "2026-07-17", endDate: "2026-07-17" },
+    products: [{ id: "product-1", name: "Croissant" }],
+    activeVariables: [{ id: "weather", name: "Weather and material alerts" }],
+    historicalEvidence: forecastTestEvidence(),
+    baselines: [forecastTestBaseline],
+  };
+  const provider = (response) => new server.OpenAIResponsesForecastProvider({
+    apiKey: "ai-secret",
+    model: "web-model",
+    baseUrl: "https://api.example.com/v1",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async () => response,
+  });
+
+  await assert.rejects(
+    provider(Response.json({ error: { code: "insufficient_quota", message: "private billing detail" } }, { status: 429 })).generate(request),
+    (error) => error.code === "quota_unavailable" && error.status === 429 && !error.message.includes("private billing detail"),
+  );
+  await assert.rejects(
+    provider(Response.json({ error: { code: "rate_limit_exceeded", message: "private limit detail" } }, { status: 429 })).generate(request),
+    (error) => error.code === "rate_limited" && error.status === 429 && !error.message.includes("private limit detail"),
+  );
 });
 
 test("Supabase credential storage uses only the service RPCs and bytea envelopes", async () => {
@@ -933,7 +1249,7 @@ test("an AI origin change is atomic when the administrator supplies a replacemen
     provider: "ai",
     body: {
       apiKey: replacement,
-      providerName: "new-responses-provider",
+      providerName: "responses-compatible",
       modelName: "new-web-model",
       baseUrl: "https://new-provider.example/v2",
     },
@@ -951,7 +1267,7 @@ test("an AI origin change is atomic when the administrator supplies a replacemen
   assert.ok(!JSON.stringify(saved).includes(replacement));
 });
 
-test("provider probes are non-destructive, reject redirects, and use injected network fakes", async () => {
+test("provider probes verify real AI capabilities, reject redirects, and use injected network fakes", async () => {
   const calls = [];
   const fetcher = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -966,7 +1282,16 @@ test("provider probes are non-destructive, reject redirects, and use injected ne
     if (String(url) === "https://api.resend.com/emails") {
       return Response.json({ name: "missing_required_field", message: "Required fields are missing." }, { status: 422 });
     }
-    return Response.json({ data: [] });
+    if (String(url).endsWith("/models")) {
+      return Response.json({ data: [{ id: "web-model" }] });
+    }
+    if (String(url).endsWith("/responses")) {
+      return Response.json({ output: [
+        { type: "web_search_call", id: "search-1", status: "completed" },
+        { type: "message", content: [{ type: "output_text", text: '{"capability":"web_search_and_structured_output"}' }] },
+      ] });
+    }
+    throw new Error(`unexpected provider probe ${String(url)}`);
   };
   await server.testProviderConnection({
     configuration: { provider: "resend", senderEmail: "forecast@example.com" },
@@ -1002,9 +1327,57 @@ test("provider probes are non-destructive, reject redirects, and use injected ne
   assert.equal(calls[0].init.method, "POST");
   assert.equal(calls[0].init.body, "{}");
   assert.equal(calls[1].url, "https://api.provider.example/v1/models");
-  assert.ok(calls[2].url.includes("/contents/ANALYSIS_SKILL.md?ref=trunk"));
+  assert.equal(calls[2].url, "https://api.provider.example/v1/responses");
+  const aiProbe = JSON.parse(calls[2].init.body);
+  assert.equal(aiProbe.model, "web-model");
+  assert.equal(aiProbe.tool_choice, "required");
+  assert.equal(aiProbe.text.format.type, "json_schema");
+  assert.equal(aiProbe.text.format.strict, true);
+  assert.ok(calls[3].url.includes("/contents/ANALYSIS_SKILL.md?ref=trunk"));
   assert.ok(calls.every((call) => call.init.redirect === "error"));
-  assert.ok(calls.slice(1).every((call) => (call.init.method ?? "GET") === "GET"));
+  assert.equal(calls[1].init.method ?? "GET", "GET");
+  assert.equal(calls[2].init.method, "POST");
+  assert.equal(calls[3].init.method ?? "GET", "GET");
+});
+
+test("AI capability probes accept aliases omitted from model lists and report real failures precisely", async () => {
+  const configuration = {
+    provider: "ai",
+    providerName: "responses-compatible",
+    modelName: "web-model",
+    baseUrl: "https://api.provider.example/v1",
+  };
+  await server.testProviderConnection({
+    configuration,
+    credential: "ai-private-key",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async (url) => String(url).endsWith("/models")
+      ? Response.json({ data: [{ id: "another-model" }] })
+      : Response.json({ output: [
+        { type: "web_search_call", id: "search-1", status: "completed" },
+        { type: "message", content: [{ type: "output_text", text: '{"capability":"web_search_and_structured_output"}' }] },
+      ] }),
+  });
+
+  await assert.rejects(server.testProviderConnection({
+    configuration,
+    credential: "ai-private-key",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async (url) => String(url).endsWith("/models")
+      ? Response.json({ data: [{ id: "canonical-model" }] })
+      : Response.json({ error: { code: "model_not_found" } }, { status: 404 }),
+  }), { code: "model_unavailable" });
+
+  await assert.rejects(server.testProviderConnection({
+    configuration,
+    credential: "ai-private-key",
+    resolveHost: async () => ["93.184.216.34"],
+    fetch: async (url) => String(url).endsWith("/models")
+      ? Response.json({ data: [{ id: "web-model" }] })
+      : Response.json({ output: [
+        { type: "message", content: [{ type: "output_text", text: '{"capability":"web_search_and_structured_output"}' }] },
+      ] }),
+  }), { code: "web_search_unavailable" });
 });
 
 test("Resend probe accepts a Sending-only validation response and rejects invalid credentials", async () => {
@@ -1554,13 +1927,13 @@ test("internal email test uses a mocked provider, one recipient, and exact activ
     ia_locations: [{
       id: "location-1",
       brand_id: "brand-1",
-      name: "Harbor Avenue",
+      name: "Queen Street",
       time_zone: "America/Toronto",
-      street_address: "100 Harbor Avenue",
-      city: "Example City",
-      region: "Example Region",
-      postal_code: "00000",
-      country_code: "US",
+      street_address: "100 Queen Street West",
+      city: "Toronto",
+      region: "Ontario",
+      postal_code: "M5H 2N2",
+      country_code: "CA",
     }],
     ia_brands: [{ id: "brand-1", name: "Test Brand" }],
     ia_forecast_runs: [{ id: "run-1", location_id: "location-1", policy_revision_id: "policy-1", period_start: "2026-07-17", period_end: "2026-07-17", status: "baseline_only", generated_at: "2026-07-16T20:00:00.000Z", completed_at: "2026-07-16T20:00:00.000Z", created_at: "2026-07-16T20:00:00.000Z" }],
@@ -1614,7 +1987,7 @@ test("internal email test uses a mocked provider, one recipient, and exact activ
   assert.equal(providerCalls.length, 1);
   const outbound = JSON.parse(providerCalls[0].init.body);
   assert.deepEqual(outbound.to, ["manager@example.com"]);
-  assert.match(outbound.html, /Harbor Avenue/);
+  assert.match(outbound.html, /Queen Street/);
   assert.match(outbound.html, />31</);
   assert.ok(!outbound.html.includes("another@example.com"));
   const verification = rpcCalls.find(([name]) => name === "ia_server_mark_email_verified");

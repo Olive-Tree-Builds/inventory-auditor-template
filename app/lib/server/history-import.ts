@@ -84,6 +84,13 @@ type ProductResolution = {
   decision: ProductDecision["decision"];
 };
 
+export class HistoryImportFileError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HistoryImportFileError";
+  }
+}
+
 function normalizeLookup(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
@@ -137,20 +144,33 @@ function cellText(cell: ExcelJS.Cell) {
 
 async function loadWorksheet(filename: string, bytes: Buffer) {
   const extension = filename.toLowerCase().split(".").pop();
-  if (extension !== "xlsx" && extension !== "csv") throw new Error("Use an .xlsx or .csv file.");
+  if (extension !== "xlsx" && extension !== "csv") throw new HistoryImportFileError("Use an .xlsx or .csv file.");
 
   const workbook = new ExcelJS.Workbook();
-  if (extension === "csv") {
-    // ExcelJS otherwise converts date-only CSV text into a timezone-sensitive
-    // JavaScript Date before validation, making a valid YYYY-MM-DD look timed.
-    await workbook.csv.read(Readable.from(bytes), { dateFormats: [] });
-  } else {
-    await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+  try {
+    if (extension === "csv") {
+      // ExcelJS otherwise converts date-only CSV text into a timezone-sensitive
+      // JavaScript Date before validation, making a valid YYYY-MM-DD look timed.
+      await workbook.csv.read(Readable.from(bytes), { dateFormats: [] });
+    } else {
+      await workbook.xlsx.load(bytes as unknown as ExcelJS.Buffer);
+    }
+  } catch {
+    throw new HistoryImportFileError(
+      extension === "xlsx"
+        ? "The Excel workbook could not be read. Open it in Excel, Google Sheets, Numbers, or LibreOffice and save it again as a standard .xlsx file."
+        : "The CSV file could not be read. Save it as a standard UTF-8 comma-separated file and try again.",
+    );
   }
 
-  if (workbook.worksheets.length !== 1) throw new Error("Use exactly one visible worksheet.");
-  const worksheet = workbook.worksheets[0];
-  if (worksheet.state !== "visible") throw new Error("The worksheet must be visible.");
+  const populatedWorksheets = workbook.worksheets.filter((worksheet) => worksheet.actualRowCount > 0);
+  if (populatedWorksheets.length !== 1) {
+    throw new HistoryImportFileError("Use one worksheet containing data. Extra completely blank worksheets are allowed.");
+  }
+  const worksheet = populatedWorksheets[0];
+  if (worksheet.state !== "visible") throw new HistoryImportFileError("The worksheet containing data must be visible.");
+  if (worksheet.hasMerges) throw new HistoryImportFileError("Merged cells are not allowed in the historical-data worksheet.");
+  if (worksheet.getImages().length > 0) throw new HistoryImportFileError("Images are not allowed in the historical-data worksheet.");
   return worksheet;
 }
 
@@ -248,14 +268,25 @@ export async function parseHistoryImport(input: {
     throw new Error("The import limits are invalid.");
   }
   if (Number.isNaN(now.getTime())) throw new Error("The current date could not be determined.");
-  if (input.bytes.byteLength === 0) throw new Error("The file is empty.");
-  if (input.bytes.byteLength > maxBytes) throw new Error(`The file is larger than ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+  if (input.bytes.byteLength === 0) throw new HistoryImportFileError("The file is empty.");
+  if (input.bytes.byteLength > maxBytes) {
+    throw new HistoryImportFileError(`The file is larger than ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+  }
 
   const worksheet = await loadWorksheet(input.filename, input.bytes);
-  if (worksheet.actualRowCount < 2) throw new Error("Add at least one sales row below the headers.");
-  if (worksheet.rowCount - 1 > maxRows) throw new Error(`Use no more than ${maxRows.toLocaleString()} sales rows per import.`);
+  const populatedDataRowNumbers: number[] = [];
+  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+    if (rowNumber > 1 && row.hasValues) populatedDataRowNumbers.push(rowNumber);
+  });
+  if (populatedDataRowNumbers.length === 0) {
+    throw new HistoryImportFileError("Add at least one sales row below the headers.");
+  }
+  if (populatedDataRowNumbers.length > maxRows) {
+    throw new HistoryImportFileError(`Use no more than ${maxRows.toLocaleString()} sales rows per import.`);
+  }
 
   const header = worksheet.getRow(1);
+  if (header.hidden) throw new HistoryImportFileError("The header row must be visible.");
   const headers = REQUIRED_HEADERS.map((_, index) => cellText(header.getCell(index + 1)).toLowerCase());
   const extraHeaders = [];
   for (let column = REQUIRED_HEADERS.length + 1; column <= Math.max(header.cellCount, REQUIRED_HEADERS.length); column += 1) {
@@ -263,10 +294,10 @@ export async function parseHistoryImport(input: {
     if (value) extraHeaders.push(value);
   }
   if (headers.some((value, index) => value !== REQUIRED_HEADERS[index]) || extraHeaders.length > 0) {
-    throw new Error("Keep exactly these columns in this order: date, product, location, quantity.");
+    throw new HistoryImportFileError("Keep exactly these columns in this order: date, product, location, quantity.");
   }
   for (let column = 1; column <= worksheet.columnCount; column += 1) {
-    if (worksheet.getColumn(column).hidden) throw new Error("Hidden columns are not allowed.");
+    if (worksheet.getColumn(column).hidden) throw new HistoryImportFileError("Hidden columns are not allowed.");
   }
 
   const allowedLocations = input.allowedLocations.filter((location) => location.brandId === input.brandId);
@@ -303,9 +334,8 @@ export async function parseHistoryImport(input: {
   const unresolved = new Map<string, { sourceLocation: string; rowNumbers: number[] }>();
   const decisions = new Map<string, Omit<ProductDecision, "rowCount">>();
 
-  for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
+  for (const rowNumber of populatedDataRowNumbers) {
     const row = worksheet.getRow(rowNumber);
-    if (!row.hasValues) continue;
     if (row.hidden) {
       errors.push(`Row ${rowNumber}: hidden rows are not allowed.`);
       continue;

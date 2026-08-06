@@ -103,7 +103,7 @@ The GitHub token should be restricted to the one repository with Contents read/w
 
 ## Historical imports
 
-The server accepts one `.xlsx` or `.csv` file with exactly one visible worksheet and these columns in order:
+The server accepts one `.xlsx` or `.csv` file with one populated, visible worksheet and these columns in order. Extra completely blank worksheets are ignored:
 
 ```text
 date, product, location, quantity

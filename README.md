@@ -122,7 +122,7 @@ The first successful account becomes the workspace's super admin. After it is cr
 
 1. Open **Configuration → Brands & Locations** and add the brand. You do not need to create every product or location first.
 2. Open **Configuration → Historical Data**, select that brand, and download the Excel template.
-3. Fill its four columns: `date`, `product`, `location`, and `quantity`. Dates use `YYYY-MM-DD`; quantities are complete daily totals expressed as whole numbers of zero or more.
+3. The template is intentionally blank below its headings. Starting on row 2, fill its four columns: `date`, `product`, `location`, and `quantity`. Dates use `YYYY-MM-DD`; quantities are complete daily totals expressed as whole numbers of zero or more.
 4. Upload the file and select **Validate and preview**. Products are discovered automatically under the selected brand.
 5. If the file contains a location the brand does not recognize, either match it to an existing location or complete the short location card with its address and timezone. Nothing is imported until every location is resolved.
 6. Review the displayed counts for new rows, unchanged rows, and corrections. Select **Import reviewed file** only when those counts are correct.

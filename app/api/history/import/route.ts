@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireWorkspaceContext } from "../../../lib/api/auth";
 import { HttpError, jsonError, jsonOk } from "../../../lib/api/http";
-import { parseHistoryImport, type ImportMappings } from "../../../lib/server/history-import";
+import { HistoryImportFileError, parseHistoryImport, type ImportMappings } from "../../../lib/server/history-import";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -226,10 +226,12 @@ export async function POST(request: Request) {
         maxBytes: 5 * 1024 * 1024,
         maxRows: 20_000,
       });
-    } catch {
+    } catch (error) {
       throw new HttpError(
         400,
-        "The file could not be read. Use the four-column Excel or CSV template and try again.",
+        error instanceof HistoryImportFileError
+          ? error.message
+          : "The file could not be read. Use the four-column Excel or CSV template and try again.",
         "invalid_import_file",
       );
     }

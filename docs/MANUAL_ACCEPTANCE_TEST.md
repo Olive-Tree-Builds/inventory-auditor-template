@@ -175,7 +175,7 @@ Pass when all three configured connections show a successful test time and only 
 
 1. Use the existing Test Bakery brand from checkpoint 4. Do not create a duplicate brand or manually create its products.
 2. Open **Configuration → Historical Data**, select that brand, and download the Excel template.
-3. Confirm its headers are exactly, in this order:
+3. Confirm it opens with one **Historical Data** worksheet, contains no sample sales, and has these headers exactly in this order:
 
 ```text
 date, product, location, quantity

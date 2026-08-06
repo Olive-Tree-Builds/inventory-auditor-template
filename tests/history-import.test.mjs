@@ -55,6 +55,96 @@ test("history import accepts the exact date-only contract and identifies existin
   );
 });
 
+test("common UTF-8 BOM and CRLF CSV exports are accepted", async () => {
+  const result = await parseHistoryImport({
+    filename: "history.csv",
+    bytes: Buffer.from("\ufeffdate,product,location,quantity\r\n2026-07-15,Butter Croissant,Queen Street,128\r\n"),
+    brandId,
+    allowedLocations: locations,
+    allowedProducts: products,
+    now,
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.rowCount, 1);
+});
+
+test("the downloaded Excel template becomes a valid import after rows are added", async () => {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(readFileSync("public/inventory-history-template.xlsx"));
+  const worksheet = workbook.worksheets[0];
+  worksheet.getRow(2).values = [new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Queen Street", 128];
+  const result = await parseHistoryImport({
+    filename: "inventory-history-template.xlsx",
+    bytes: Buffer.from(await workbook.xlsx.writeBuffer()),
+    brandId,
+    allowedLocations: locations,
+    allowedProducts: products,
+    now,
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.rowCount, 1);
+  assert.equal(result.rows[0]?.businessDate, "2026-07-15");
+  assert.equal(result.rows[0]?.quantity, 128);
+});
+
+test("extra blank worksheets and style-only distant rows do not make a valid upload fail", async () => {
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("Historical Data");
+  worksheet.addRow(["date", "product", "location", "quantity"]);
+  worksheet.addRow([new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Queen Street", 2]);
+  worksheet.getRow(50_000).height = 20;
+  workbook.addWorksheet("Sheet 2");
+  const result = await parseHistoryImport({
+    filename: "history.xlsx",
+    bytes: Buffer.from(await workbook.xlsx.writeBuffer()),
+    brandId,
+    allowedLocations: locations,
+    allowedProducts: products,
+    now,
+  });
+
+  assert.deepEqual(result.errors, []);
+  assert.equal(result.rowCount, 1);
+});
+
+test("a second populated worksheet and merged cells are rejected with actionable file errors", async () => {
+  const secondSheetWorkbook = new ExcelJS.Workbook();
+  const sales = secondSheetWorkbook.addWorksheet("Historical Data");
+  sales.addRow(["date", "product", "location", "quantity"]);
+  sales.addRow([new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Queen Street", 2]);
+  secondSheetWorkbook.addWorksheet("Notes").getCell("A1").value = "Remove this sheet before importing";
+  await assert.rejects(
+    parseHistoryImport({
+      filename: "history.xlsx",
+      bytes: Buffer.from(await secondSheetWorkbook.xlsx.writeBuffer()),
+      brandId,
+      allowedLocations: locations,
+      allowedProducts: products,
+      now,
+    }),
+    /Use one worksheet containing data/,
+  );
+
+  const mergedWorkbook = new ExcelJS.Workbook();
+  const merged = mergedWorkbook.addWorksheet("Historical Data");
+  merged.addRow(["date", "product", "location", "quantity"]);
+  merged.addRow([new Date("2026-07-15T00:00:00Z"), "Butter Croissant", "Queen Street", 2]);
+  merged.mergeCells("B2:C2");
+  await assert.rejects(
+    parseHistoryImport({
+      filename: "history.xlsx",
+      bytes: Buffer.from(await mergedWorkbook.xlsx.writeBuffer()),
+      brandId,
+      allowedLocations: locations,
+      allowedProducts: products,
+      now,
+    }),
+    /Merged cells are not allowed/,
+  );
+});
+
 test("history import makes unknown locations resolvable while rejecting every other invalid row", async () => {
   const result = await parseCsv([
     "date,product,location,quantity",
@@ -323,6 +413,7 @@ test("the guided import route enforces brand scope, aliases, mappings, and the v
   assert.match(route, /ia_import_historical_sales_v2/);
   assert.match(route, /file\.size > 5 \* 1024 \* 1024/);
   assert.match(route, /maxRows: 20_000/);
+  assert.match(route, /error instanceof HistoryImportFileError/);
   assert.ok(
     route.indexOf("ia_preview_historical_import_v2") < route.indexOf("ia_import_historical_sales_v2"),
     "commit must follow the authoritative preview call",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync, statSync } from "node:fs";
 import test from "node:test";
+import ExcelJS from "exceljs";
 
 const configuration = readFileSync("app/components/ConfigurationScreen.tsx", "utf8");
 const aiProviderConfig = readFileSync("app/lib/server/ai-provider-config.ts", "utf8");
@@ -69,9 +70,19 @@ test("an already-imported response is final without claiming that anything chang
   assert.match(configuration, /\{preview\.alreadyImported \? "Already imported" : preview\.committed \? "Saved" : "Not saved yet"\}/);
 });
 
-test("the downloadable history template remains the exact four-column contract", () => {
+test("the downloadable history template is a parser-compatible one-sheet four-column workbook", async () => {
   assert.ok(statSync("public/inventory-history-template.xlsx").size > 5_000, "history template should remain a real workbook");
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(readFileSync("public/inventory-history-template.xlsx"));
+  assert.equal(workbook.worksheets.length, 1);
+  assert.equal(workbook.worksheets[0]?.state, "visible");
+  assert.deepEqual(
+    workbook.worksheets[0]?.getRow(1).values.slice(1, 5),
+    ["date", "product", "location", "quantity"],
+  );
+  assert.equal(workbook.worksheets[0]?.actualRowCount, 1, "the template must not contain sample sales that could be imported accidentally");
   assert.match(configuration, /Four simple columns/);
+  assert.match(configuration, /intentionally blank below the headings/);
   for (const heading of ["date", "product", "location", "quantity"]) {
     assert.match(configuration, new RegExp(`<code>${heading}<\\/code>`));
   }

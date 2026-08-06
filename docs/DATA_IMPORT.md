@@ -27,12 +27,13 @@ date,product,location,quantity
 ## Preparing a file
 
 1. Create the brand, then open Configuration → Historical Data and select it.
-2. Download the Excel template and keep the header row unchanged.
+2. Download the Excel template. It contains one worksheet and is intentionally blank below the four headers; begin on row 2 and keep the header row unchanged.
 3. Use one local date per row. Do not add a time or timezone to the date cell.
 4. Put the location label supplied by the source system in `location`. The first upload will ask the administrator to create or match any label it does not recognize.
 5. Use stable product labels where possible. The preview automatically discovers new products and lets an administrator map a variation to an existing product instead of creating a duplicate.
-6. Remove totals, blank separator rows, notes, formulas, merged cells, and extra columns.
-7. Save a clean `.xlsx` or `.csv` file and upload it for validation.
+6. Remove totals, notes, formulas, merged cells, hidden rows or columns, and extra columns. Extra completely blank worksheets are ignored, but any second worksheet containing data is rejected.
+7. Save a clean `.xlsx` or `.csv` file and upload it for validation. Excel, Google Sheets, Apple Numbers, and LibreOffice exports are supported when saved as a standard `.xlsx`; CSV files should use UTF-8 and commas.
+8. Keep each file at 20,000 sales rows or fewer and 5 MB or smaller. For larger histories, split the rows into multiple files by date and import them in order; later files add or correct rows without deleting older history.
 
 ## Validation behavior
 
@@ -45,6 +46,8 @@ Before saving anything, the importer shows the row count, date range, selected b
 - a location is unresolved, ambiguous, archived, or outside the selected brand
 - quantity is blank, negative, fractional, or not numeric
 - the file contains unsupported content or exceeds the configured size or row limit
+
+Completely blank extra worksheets and formatting on otherwise empty rows do not count as sales data. The importer reads only the one populated, visible worksheet.
 
 Duplicate rows inside one file are rejected after all product and location mappings are applied. Re-importing the exact same file for the same brand is idempotent.
 

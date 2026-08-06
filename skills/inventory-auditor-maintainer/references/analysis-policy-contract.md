@@ -11,7 +11,7 @@ Use this reference for any change to forecasting, AI calls, analysis prompts, re
 5. Calculate and retain the historical baseline and compact checksummed evidence on the host.
 6. Send the AI only the authorized location/product scope, active variables, and compact evidence—never the raw history table.
 7. Ask a compatible AI provider to perform live research for the approved location and dates and return research assessments only.
-8. Reject incomplete, out-of-scope, uncited, or over-limit research; apply validated adjustments and final arithmetic on the host.
+8. Reject incomplete, out-of-scope, uncited, or over-limit research. Validate historically supported adjustments and low-confidence no-history estimates as separate tracks, then apply caps and final arithmetic on the host.
 9. Validate the host-assembled forecast against the storage schema.
 10. Store recommendations, direct source URLs, warnings, provider/model metadata, and audit identifiers.
 11. Scope dashboard display and combined email output to each user's active location assignments.
@@ -26,6 +26,7 @@ A useful active variable answers all of these:
 - Which brands, locations, products, and dates can it affect?
 - Which current public evidence is required?
 - Which historical comparison supports a non-zero adjustment?
+- When factor-specific history is unavailable, what narrow low-confidence rough estimate is permitted?
 - How are direction, magnitude, and confidence decided?
 - What happens when evidence is absent, stale, or contradictory?
 
@@ -37,12 +38,13 @@ Example pattern:
   - Applies when: An assigned location is within the configured university trade area and an official move-in date overlaps the forecast period.
   - Evidence required: Official university housing calendar plus comparable historical dates for the location.
   - Expected effect: Derive direction and magnitude from comparable history.
-  - Products affected: Only products with a demonstrated location-level relationship.
+  - Rough estimate guidance: If move-in is verified but comparable history is unavailable, allow a low-confidence opinion within plus or minus 5% based on proximity and timing; otherwise use zero.
+  - Products affected: Evidence-backed adjustments require a demonstrated relationship; the separate rough track may give a cautious product-specific opinion without comparable history.
   - Fallback: Use zero adjustment and low confidence when current evidence or comparable history is unavailable.
   - Notes: Do not generalize one campus's dates to another location.
 ```
 
-Avoid vague rules such as “events increase demand by 20%.” They lack location scope, historical evidence, and a conservative fallback.
+Avoid vague rules such as “events increase demand by 20%.” They lack location scope, historical evidence, bounded rough guidance, and a conservative fallback.
 
 ## Policy edit procedure
 
@@ -59,6 +61,7 @@ Avoid vague rules such as “events increase demand by 20%.” They lack locatio
 
 - Missing/unreadable policy: stop with `policy_unavailable`.
 - No web-capable provider: store the host baseline with an explicit warning; do not claim multivariate completion.
-- Weak or conflicting evidence: zero adjustment, reduced confidence, warning.
+- Weak or conflicting current evidence: zero on both tracks, reduced confidence, warning.
+- Relevant current evidence but no factor-specific history: keep the supported adjustment at zero; a separately labeled, capped rough estimate may be used only when the active variable explicitly permits it. Mark the run `needs_review`.
 - Malformed or unsupported AI output: reject it; never email an unvalidated recommendation.
 - Access mismatch: deny before any research or analysis and do not reveal whether unauthorized data exists.

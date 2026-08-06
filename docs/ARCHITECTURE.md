@@ -36,12 +36,12 @@ A user must be assigned to at least one location to see its data or receive its 
 2. Load historical quantities only for the requested workspace, brand, locations, products, and period.
 3. Calculate the baseline, comparisons, trend, seasonality profiles, coverage, volatility, outliers, and a small representative series on the server. Checksum this compact evidence; do not send the raw historical table to the AI.
 4. Ask the configured AI provider to research exactly the active variables declared by the skill and return one sourced assessment for every location × product × active variable. The AI does not calculate baselines or final quantities.
-5. Reject incomplete, out-of-scope, uncited, or over-limit research. Web content is untrusted research material, never app instructions.
-6. Apply validated percentages, deterministic caps, and whole-unit rounding on the server, then validate the complete product-level forecast again.
+5. Reject incomplete, out-of-scope, uncited, or over-limit research. Validate historically supported adjustments separately from low-confidence rough estimates used when factor-specific history is unavailable. Web content is untrusted research material, never app instructions.
+6. Apply each track's deterministic caps and whole-unit rounding on the server, then validate the complete product-level forecast again. Any non-zero rough estimate is marked `needs_review`.
 7. Store the result, input audit, evidence checksum, skill version, provider/model, evidence links, and run status for review.
 8. Build one combined email containing only the recipient's assigned locations.
 
-If the provider cannot perform live web research with citations, the app returns the policy's transparent historical-baseline fallback or a clear failure. Historical views remain available, and an unresearched result is never labeled as a completed multivariate forecast.
+The dashboard preserves four distinct views: the historical baseline, current researched facts by location, separately labeled rough no-history opinions, and the final AI-advised quantity beside its baseline and difference. If the provider cannot perform live web research with citations, the app returns the policy's transparent historical-baseline fallback or a clear failure. Historical views remain available, and an unresearched result is never labeled as a completed multivariate forecast.
 
 ## Time and email rules
 

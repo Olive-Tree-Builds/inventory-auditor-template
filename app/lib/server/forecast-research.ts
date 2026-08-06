@@ -16,17 +16,26 @@ export const FORECAST_RESEARCH_JSON_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["location_id", "product_id", "variable_id", "direction", "adjustment_percent", "confidence", "relevance", "evidence", "source_ids"],
+        required: [
+          "location_id", "product_id", "variable_id", "historical_basis", "direction",
+          "adjustment_percent", "confidence", "relevance", "evidence", "source_ids",
+          "rough_direction", "rough_adjustment_percent", "rough_confidence", "rough_reasoning",
+        ],
         properties: {
           location_id: { type: "string" },
           product_id: { type: "string" },
           variable_id: { type: "string" },
+          historical_basis: { type: "string", enum: ["supported", "unavailable", "not_relevant"] },
           direction: { type: "string", enum: ["increase", "decrease", "neutral"] },
           adjustment_percent: { type: "number" },
           confidence: { type: "string", enum: ["high", "medium", "low"] },
           relevance: { type: "string" },
           evidence: { type: "string" },
           source_ids: { type: "array", items: { type: "string" } },
+          rough_direction: { type: "string", enum: ["increase", "decrease", "neutral"] },
+          rough_adjustment_percent: { type: "number" },
+          rough_confidence: { type: "string", enum: ["low"] },
+          rough_reasoning: { type: "string" },
         },
       },
     },
@@ -58,12 +67,17 @@ export type ForecastResearchOutput = {
     location_id: string;
     product_id: string;
     variable_id: string;
+    historical_basis: "supported" | "unavailable" | "not_relevant";
     direction: "increase" | "decrease" | "neutral";
     adjustment_percent: number;
     confidence: "high" | "medium" | "low";
     relevance: string;
     evidence: string;
     source_ids: string[];
+    rough_direction: "increase" | "decrease" | "neutral";
+    rough_adjustment_percent: number;
+    rough_confidence: "low";
+    rough_reasoning: string;
   }>;
   sources: Array<{
     id: string;
@@ -150,6 +164,9 @@ export function validateForecastResearchOutput(raw: unknown, context: {
   activeVariables: ActiveForecastVariable[];
   maxAbsFactorAdjustmentPercent?: number;
   maxAbsCombinedAdjustmentPercent?: number;
+  maxAbsRoughFactorAdjustmentPercent?: number;
+  maxAbsCombinedRoughAdjustmentPercent?: number;
+  maxAbsCombinedAdvisedAdjustmentPercent?: number;
 }): ForecastResearchOutput {
   const issues: string[] = [];
   const root = object(raw, "research", issues);
@@ -160,6 +177,9 @@ export function validateForecastResearchOutput(raw: unknown, context: {
   const variableIds = new Set(context.activeVariables.map((variable) => variable.id));
   const maxFactor = context.maxAbsFactorAdjustmentPercent ?? 25;
   const maxCombined = context.maxAbsCombinedAdjustmentPercent ?? 50;
+  const maxRoughFactor = context.maxAbsRoughFactorAdjustmentPercent ?? 15;
+  const maxCombinedRough = context.maxAbsCombinedRoughAdjustmentPercent ?? 30;
+  const maxCombinedAdvised = context.maxAbsCombinedAdvisedAdjustmentPercent ?? 50;
 
   const sourceRows = root.sources;
   if (!Array.isArray(sourceRows) || sourceRows.length > 100) issues.push("research.sources must be a bounded array.");
@@ -192,29 +212,54 @@ export function validateForecastResearchOutput(raw: unknown, context: {
   const seen = new Set<string>();
   const referencedSources = new Set<string>();
   const combined = new Map<string, number>();
+  const combinedRough = new Map<string, number>();
   for (const [index, value] of (Array.isArray(assessmentRows) ? assessmentRows : []).entries()) {
     const path = `research.assessments[${index}]`;
     const assessment = object(value, path, issues);
     const locationId = string(assessment, "location_id", path, issues);
     const productId = string(assessment, "product_id", path, issues);
     const variableId = string(assessment, "variable_id", path, issues);
+    const historicalBasis = string(assessment, "historical_basis", path, issues);
     const direction = string(assessment, "direction", path, issues);
     const percent = number(assessment, "adjustment_percent", path, issues);
     const confidence = string(assessment, "confidence", path, issues);
     const relevance = string(assessment, "relevance", path, issues);
     const evidence = string(assessment, "evidence", path, issues);
     const assessmentSourceIds = strings(assessment, "source_ids", path, issues);
+    const roughDirection = string(assessment, "rough_direction", path, issues);
+    const roughPercent = number(assessment, "rough_adjustment_percent", path, issues);
+    const roughConfidence = string(assessment, "rough_confidence", path, issues);
+    const roughReasoning = string(assessment, "rough_reasoning", path, issues);
     const key = `${locationId}\u0000${productId}\u0000${variableId}`;
     if (seen.has(key)) issues.push(`${path} is duplicated.`);
     seen.add(key);
     if (!context.locationIds.includes(locationId)) issues.push(`${path}.location_id is outside the authorized scope.`);
     if (!productIds.has(productId)) issues.push(`${path}.product_id is outside the requested products.`);
     if (!variableIds.has(variableId)) issues.push(`${path}.variable_id is not active.`);
+    if (!(["supported", "unavailable", "not_relevant"] as string[]).includes(historicalBasis)) issues.push(`${path}.historical_basis is unsupported.`);
     if (!(["increase", "decrease", "neutral"] as string[]).includes(direction)) issues.push(`${path}.direction is unsupported.`);
     if (!(["high", "medium", "low"] as string[]).includes(confidence)) issues.push(`${path}.confidence is unsupported.`);
     if (!Number.isFinite(percent) || Math.abs(percent) > maxFactor) issues.push(`${path}.adjustment_percent exceeds the deterministic factor cap.`);
     if ((percent > 0 && direction !== "increase") || (percent < 0 && direction !== "decrease") || (percent === 0 && direction !== "neutral")) {
       issues.push(`${path}.direction does not match its signed adjustment.`);
+    }
+    if (!(["increase", "decrease", "neutral"] as string[]).includes(roughDirection)) issues.push(`${path}.rough_direction is unsupported.`);
+    if (roughConfidence !== "low") issues.push(`${path}.rough_confidence must remain low without factor-specific history.`);
+    if (!Number.isFinite(roughPercent) || Math.abs(roughPercent) > maxRoughFactor) issues.push(`${path}.rough_adjustment_percent exceeds the deterministic rough factor cap.`);
+    if ((roughPercent > 0 && roughDirection !== "increase") || (roughPercent < 0 && roughDirection !== "decrease") || (roughPercent === 0 && roughDirection !== "neutral")) {
+      issues.push(`${path}.rough_direction does not match its signed rough adjustment.`);
+    }
+    if (historicalBasis === "supported" && roughPercent !== 0) {
+      issues.push(`${path} cannot use a rough adjustment when factor-specific history supports the evidence-backed adjustment.`);
+    }
+    if (historicalBasis === "unavailable" && (percent !== 0 || direction !== "neutral")) {
+      issues.push(`${path} must keep the evidence-backed adjustment neutral when factor-specific history is unavailable.`);
+    }
+    if (historicalBasis === "unavailable" && confidence !== "low") {
+      issues.push(`${path}.confidence must be low when factor-specific history is unavailable.`);
+    }
+    if (historicalBasis === "not_relevant" && (percent !== 0 || roughPercent !== 0 || direction !== "neutral" || roughDirection !== "neutral")) {
+      issues.push(`${path} must keep both adjustment tracks neutral when the factor is not relevant.`);
     }
     if (assessmentSourceIds.length === 0) issues.push(`${path} requires a direct source showing that the active variable was researched, including for a neutral result.`);
     if (assessmentSourceIds.length !== new Set(assessmentSourceIds).size) issues.push(`${path}.source_ids contains duplicates.`);
@@ -224,16 +269,22 @@ export function validateForecastResearchOutput(raw: unknown, context: {
     }
     const pair = `${locationId}\u0000${productId}`;
     combined.set(pair, (combined.get(pair) ?? 0) + (Number.isFinite(percent) ? percent : 0));
+    combinedRough.set(pair, (combinedRough.get(pair) ?? 0) + (Number.isFinite(roughPercent) ? roughPercent : 0));
     assessments.push({
       location_id: locationId,
       product_id: productId,
       variable_id: variableId,
+      historical_basis: historicalBasis as ForecastResearchOutput["assessments"][number]["historical_basis"],
       direction: direction as ForecastResearchOutput["assessments"][number]["direction"],
       adjustment_percent: percent,
       confidence: confidence as ForecastResearchOutput["assessments"][number]["confidence"],
       relevance,
       evidence,
       source_ids: assessmentSourceIds,
+      rough_direction: roughDirection as ForecastResearchOutput["assessments"][number]["rough_direction"],
+      rough_adjustment_percent: roughPercent,
+      rough_confidence: roughConfidence as "low",
+      rough_reasoning: roughReasoning,
     });
   }
   const expectedKeys = context.locationIds.flatMap((locationId) => context.products.flatMap((product) => (
@@ -241,6 +292,12 @@ export function validateForecastResearchOutput(raw: unknown, context: {
   )));
   if (!exactSet([...seen], expectedKeys)) issues.push("research.assessments do not exactly match the authorized combinations.");
   for (const total of combined.values()) if (Math.abs(total) > maxCombined) issues.push("A product's combined adjustment exceeds the deterministic cap.");
+  for (const total of combinedRough.values()) if (Math.abs(total) > maxCombinedRough) issues.push("A product's combined rough adjustment exceeds the deterministic cap.");
+  for (const [pair, total] of combined.entries()) {
+    if (Math.abs(total + (combinedRough.get(pair) ?? 0)) > maxCombinedAdvised) {
+      issues.push("A product's combined AI-advised adjustment exceeds the deterministic cap.");
+    }
+  }
   for (const sourceId of sourceIds) if (!referencedSources.has(sourceId)) issues.push(`Source “${sourceId}” is not referenced by an assessment.`);
   if (issues.length) throw new ForecastResearchValidationError(issues);
   return { status: status as ForecastResearchOutput["status"], assessments, sources, warnings };
@@ -271,8 +328,12 @@ export function assembleForecastOutputFromResearch(input: {
       assessment.location_id === baseline.locationId && assessment.product_id === baseline.productId
     ));
     const adjustmentTotal = assessments.reduce((sum, assessment) => sum + assessment.adjustment_percent, 0);
-    const recommended = Math.max(0, Math.round(baseline.quantity * (1 + adjustmentTotal / 100)));
-    const confidence = weakestConfidence([baseline.confidence, ...assessments.map((assessment) => assessment.confidence)]);
+    const roughAdjustmentTotal = assessments.reduce((sum, assessment) => sum + assessment.rough_adjustment_percent, 0);
+    const advisedAdjustmentTotal = adjustmentTotal + roughAdjustmentTotal;
+    const recommended = Math.max(0, Math.round(baseline.quantity * (1 + advisedAdjustmentTotal / 100)));
+    const confidence = roughAdjustmentTotal !== 0
+      ? "low"
+      : weakestConfidence([baseline.confidence, ...assessments.map((assessment) => assessment.confidence)]);
     return {
       location_id: baseline.locationId,
       product_id: baseline.productId,
@@ -281,21 +342,29 @@ export function assembleForecastOutputFromResearch(input: {
       adjustments: assessments.map((assessment) => ({
         variable_id: assessment.variable_id,
         variable: variableNames.get(assessment.variable_id) ?? assessment.variable_id,
+        historical_basis: assessment.historical_basis,
         direction: assessment.direction,
         adjustment_percent: assessment.adjustment_percent,
         confidence: assessment.confidence,
         relevance: assessment.relevance,
         evidence: assessment.evidence,
         source_ids: assessment.source_ids,
+        rough_direction: assessment.rough_direction,
+        rough_adjustment_percent: assessment.rough_adjustment_percent,
+        rough_confidence: assessment.rough_confidence,
+        rough_reasoning: assessment.rough_reasoning,
       })),
       recommended_quantity: recommended,
       confidence,
-      explanation: `The server applied ${adjustmentTotal >= 0 ? "+" : ""}${Math.round(adjustmentTotal * 100) / 100}% in validated research adjustments to the ${baseline.quantity}-unit historical baseline and rounded to ${recommended} units.`,
+      explanation: `The server started with the ${baseline.quantity}-unit historical baseline, applied ${adjustmentTotal >= 0 ? "+" : ""}${Math.round(adjustmentTotal * 100) / 100}% in historically supported adjustments and ${roughAdjustmentTotal >= 0 ? "+" : ""}${Math.round(roughAdjustmentTotal * 100) / 100}% in low-confidence rough adjustments, then rounded the AI-advised planning quantity to ${recommended} units.`,
     };
   });
+  const usesRoughEstimate = recommendations.some((recommendation) => (
+    recommendation.adjustments.some((adjustment) => adjustment.rough_adjustment_percent !== 0)
+  ));
   const baselineMethods = [...new Set(input.baselines.map((baseline) => baseline.method))];
   const finalCandidate: ForecastOutput = {
-    status: research.status,
+    status: usesRoughEstimate ? "needs_review" : research.status,
     scope: {
       workspace_id: input.context.workspaceId,
       brand_id: input.context.brandId,
@@ -315,7 +384,7 @@ export function assembleForecastOutputFromResearch(input: {
     },
     method: {
       baseline_method: baselineMethods.join(" "),
-      adjustment_method: "Server-applied additive percentage adjustments from validated AI research assessments.",
+      adjustment_method: "Server-applied additive percentages with historically supported adjustments and separately labeled low-confidence rough estimates.",
       rounding_rule: "Round to the nearest whole unit and never below zero.",
       research_completed: true,
     },
@@ -327,7 +396,10 @@ export function assembleForecastOutputFromResearch(input: {
       rows_used: input.context.history.rowsUsed,
       issues: input.dataQualityIssues,
     },
-    warnings: research.warnings,
+    warnings: [
+      ...research.warnings,
+      ...(usesRoughEstimate ? ["The AI-advised quantity includes low-confidence rough estimates because factor-specific historical calibration was unavailable. Review the researched facts before acting."] : []),
+    ],
     audit: {
       run_id: input.context.runId,
       generated_at: input.context.serverTimestamp,

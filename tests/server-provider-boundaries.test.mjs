@@ -232,7 +232,7 @@ test("GitHub Analysis Skill updates use blob-SHA compare-and-swap and verify the
   const oldSha = "a".repeat(40);
   const newSha = "b".repeat(40);
   const commitSha = "c".repeat(40);
-  const updatedPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `2.0.1`");
+  const updatedPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `3.0.1`");
   const calls = [];
   let getCount = 0;
   const fetcher = async (url, init) => {
@@ -372,7 +372,7 @@ test("forecast policy reconciliation reads GitHub on every run and reuses only a
 });
 
 test("forecast policy reconciliation fails closed on a repository mismatch without an administrator actor", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `2.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin, rpcCalls } = fakeAnalysisPolicyAdmin(existing);
   await assert.rejects(
@@ -388,7 +388,7 @@ test("forecast policy reconciliation fails closed on a repository mismatch witho
 });
 
 test("forecast policy reconciliation activates and read-verifies the repository revision with an explicit admin actor", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `2.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin, rpcCalls } = fakeAnalysisPolicyAdmin(existing);
   let reads = 0;
@@ -410,8 +410,8 @@ test("forecast policy reconciliation activates and read-verifies the repository 
 });
 
 test("forecast policy reconciliation never uses a document that changes during activation", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
-  const changedPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `2.0.1`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `2.9.0`");
+  const changedPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `3.0.1`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin } = fakeAnalysisPolicyAdmin(existing);
   let reads = 0;
@@ -434,7 +434,7 @@ test("forecast policy reconciliation never uses a document that changes during a
 });
 
 test("forecast policy reconciliation rejects an activation that lost the database active-state race", async () => {
-  const oldPolicy = rootPolicy.replace("- Policy version: `2.0.0`", "- Policy version: `1.9.0`");
+  const oldPolicy = rootPolicy.replace("- Policy version: `3.0.0`", "- Policy version: `2.9.0`");
   const existing = analysisPolicyRecord(oldPolicy, "11111111-1111-4111-8111-111111111111", "b".repeat(40));
   const { admin } = fakeAnalysisPolicyAdmin(existing, { activateState: false });
   await assert.rejects(
@@ -588,7 +588,8 @@ test("Responses-compatible forecasting adapter enables web search and strict str
   assert.equal(body.store, false);
   assert.deepEqual(body.reasoning, { effort: "low" });
   assert.equal(body.text.verbosity, "low");
-  assert.equal(body.max_output_tokens, 2_500);
+  assert.equal(body.max_output_tokens, 3_000);
+  assert.match(body.input[1].content[0].text, /expected_assessment_count/);
   assert.match(body.input[0].content[0].text, /ANALYSIS_SKILL/);
   assert.deepEqual(body.input[1].content[0].text.includes("100 Queen Street West, Toronto, Ontario, M5H 2N2, CA"), true);
   assert.match(body.input[1].content[0].text, /historical_evidence/);
@@ -848,12 +849,17 @@ const validForecast = {
     adjustments: [{
       variable_id: "weather",
       variable: "Weather and material alerts",
+      historical_basis: "supported",
       direction: "increase",
       adjustment_percent: 10,
       confidence: "high",
       relevance: "A forecast alert overlaps the requested period.",
       evidence: "The official forecast shows the relevant condition.",
       source_ids: ["source-1"],
+      rough_direction: "neutral",
+      rough_adjustment_percent: 0,
+      rough_confidence: "low",
+      rough_reasoning: "No rough estimate is used because the factor effect is historically supported.",
     }],
     recommended_quantity: 110,
     confidence: "high",
@@ -879,12 +885,17 @@ const validResearch = {
     location_id: "location-1",
     product_id: "product-1",
     variable_id: "weather",
+    historical_basis: "supported",
     direction: "increase",
     adjustment_percent: 10,
     confidence: "medium",
     relevance: "The forecast condition overlaps the exact location and date.",
     evidence: "A current official forecast supports a modest demand adjustment.",
     source_ids: ["source-1"],
+    rough_direction: "neutral",
+    rough_adjustment_percent: 0,
+    rough_confidence: "low",
+    rough_reasoning: "No rough estimate is used because the factor effect is historically supported.",
   }],
   sources: [{
     id: "source-1",
@@ -908,7 +919,7 @@ test("the host validates AI research and owns final forecast arithmetic", () => 
   assert.equal(result.recommendations[0].baseline_quantity, 100);
   assert.equal(result.recommendations[0].recommended_quantity, 110);
   assert.equal(result.recommendations[0].confidence, "medium");
-  assert.match(result.recommendations[0].explanation, /server applied \+10%/i);
+  assert.match(result.recommendations[0].explanation, /applied \+10% in historically supported adjustments/i);
   assert.equal(result.sources[0].accessed_at, validationContext.serverTimestamp);
   assert.deepEqual(result.data_quality.issues, ["Sparse dates were kept missing rather than converted to zero."]);
 
@@ -923,6 +934,48 @@ test("the host validates AI research and owns final forecast arithmetic", () => 
       dataQualityIssues: [],
     }),
     (error) => error.issues.some((issue) => issue.includes("factor cap")),
+  );
+});
+
+test("the host keeps no-history rough estimates separate, bounded, and review-only", () => {
+  const roughResearch = structuredClone(validResearch);
+  roughResearch.status = "needs_review";
+  Object.assign(roughResearch.assessments[0], {
+    historical_basis: "unavailable",
+    direction: "neutral",
+    adjustment_percent: 0,
+    confidence: "low",
+    rough_direction: "increase",
+    rough_adjustment_percent: 8,
+    rough_confidence: "low",
+    rough_reasoning: "The verified condition may modestly raise demand, but no condition-matched sales history exists.",
+  });
+  const result = server.assembleForecastOutputFromResearch({
+    rawResearch: roughResearch,
+    context: validationContext,
+    baselines: [forecastTestBaseline],
+    activeVariables: validationContext.activeVariables,
+    dataQualityIssues: [],
+  });
+  assert.equal(result.status, "needs_review");
+  assert.equal(result.recommendations[0].baseline_quantity, 100);
+  assert.equal(result.recommendations[0].recommended_quantity, 108);
+  assert.equal(result.recommendations[0].adjustments[0].adjustment_percent, 0);
+  assert.equal(result.recommendations[0].adjustments[0].rough_adjustment_percent, 8);
+  assert.equal(result.recommendations[0].confidence, "low");
+  assert.match(result.warnings.join(" "), /low-confidence rough estimates/i);
+
+  const unsafe = structuredClone(roughResearch);
+  unsafe.assessments[0].rough_adjustment_percent = 16;
+  assert.throws(
+    () => server.assembleForecastOutputFromResearch({
+      rawResearch: unsafe,
+      context: validationContext,
+      baselines: [forecastTestBaseline],
+      activeVariables: validationContext.activeVariables,
+      dataQualityIssues: [],
+    }),
+    (error) => error.issues.some((issue) => issue.includes("rough factor cap")),
   );
 });
 

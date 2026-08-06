@@ -58,7 +58,10 @@ type HistoryData = {
 type ForecastAdjustment = {
   variableId: string;
   variableName: string;
+  historicalBasis: "supported" | "unavailable" | "not_relevant";
   percent: number;
+  roughPercent: number;
+  roughReasoning: string;
   relevance: string;
   evidence: string;
   sourceIds: string[];
@@ -104,7 +107,10 @@ type ForecastData = {
 type ForecastFactorAssessment = {
   productId: string;
   productName: string;
+  historicalBasis: "supported" | "unavailable" | "not_relevant";
   percent: number;
+  roughPercent: number;
+  roughReasoning: string;
   relevance: string;
   evidence: string;
   sources: ForecastSource[];
@@ -202,24 +208,16 @@ function formatSignedPercent(value: number): string {
   return `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
 }
 
-function factorEffectLabel(assessments: ForecastFactorAssessment[]): string {
-  const nonZero = assessments.map((assessment) => assessment.percent).filter((percent) => Math.abs(percent) >= 0.05);
+function factorEffectLabel(assessments: ForecastFactorAssessment[], track: "supported" | "rough" = "supported"): string {
+  const nonZero = assessments
+    .map((assessment) => track === "rough" ? assessment.roughPercent : assessment.percent)
+    .filter((percent) => Math.abs(percent) >= 0.05);
   if (!nonZero.length) return "No quantity change";
   const minimum = Math.min(...nonZero);
   const maximum = Math.max(...nonZero);
   return Math.abs(maximum - minimum) < 0.05
     ? formatSignedPercent(maximum)
     : `${formatSignedPercent(minimum)} to ${formatSignedPercent(maximum)}`;
-}
-
-function decisionSummary(breakdown: ForecastDecisionBreakdown): string {
-  const difference = breakdown.recommended - breakdown.baseline;
-  const percentage = breakdown.baseline > 0 ? (difference / breakdown.baseline) * 100 : null;
-  const opening = `The plan starts with a ${formatNumber(breakdown.baseline)}-unit history-only estimate for ${breakdown.locationName}.`;
-  if (difference === 0) return `${opening} After checking every active factor, no supported change was applied, so the recommendation remains ${formatNumber(breakdown.recommended)} units.`;
-  const direction = difference > 0 ? "adds" : "removes";
-  const percentText = percentage === null ? "" : ` (${formatSignedPercent(percentage)})`;
-  return `${opening} The supported factor adjustments ${direction} ${formatNumber(Math.abs(difference))} ${Math.abs(difference) === 1 ? "unit" : "units"}${percentText}, resulting in a recommendation of ${formatNumber(breakdown.recommended)} units.`;
 }
 
 function formatDate(value: string, options?: Intl.DateTimeFormatOptions): string {
@@ -329,7 +327,12 @@ function normalizeAdjustments(value: unknown): ForecastAdjustment[] {
     return {
       variableId: text(first(adjustment, "variableId", "variable_id")),
       variableName: text(first(adjustment, "variableName", "variable_name", "variable")) || "Configured variable",
+      historicalBasis: ["supported", "unavailable", "not_relevant"].includes(text(first(adjustment, "historicalBasis", "historical_basis")))
+        ? text(first(adjustment, "historicalBasis", "historical_basis")) as ForecastAdjustment["historicalBasis"]
+        : number(first(adjustment, "percent", "adjustmentPercent", "adjustment_percent")) !== 0 ? "supported" : "not_relevant",
       percent: number(first(adjustment, "percent", "adjustmentPercent", "adjustment_percent")),
+      roughPercent: number(first(adjustment, "roughPercent", "roughAdjustmentPercent", "rough_adjustment_percent")),
+      roughReasoning: text(first(adjustment, "roughReasoning", "rough_reasoning")),
       relevance: text(adjustment.relevance),
       evidence: text(adjustment.evidence),
       sourceIds: strings(first(adjustment, "sourceIds", "source_ids", "sourceKeys", "source_keys")),
@@ -1073,7 +1076,10 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
           .map((adjustment) => ({
             productId: recommendation.productId,
             productName: recommendation.productName,
+            historicalBasis: adjustment.historicalBasis,
             percent: adjustment.percent,
+            roughPercent: adjustment.roughPercent,
+            roughReasoning: adjustment.roughReasoning,
             relevance: adjustment.relevance,
             evidence: adjustment.evidence,
             sources: adjustment.sourceIds.map((sourceId) => sourceById.get(sourceId)).filter((source): source is ForecastSource => Boolean(source)),
@@ -1440,7 +1446,7 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
             <div className="forecast-banner">
               <div className="forecast-total">
                 <span className="forecast-date"><CalendarDays size={16} aria-hidden="true" /> {formatRange(forecastStart, forecastEnd)}</span>
-                <span className="forecast-total-label">Recommended to make</span>
+                <span className="forecast-total-label">AI-advised total</span>
                 <strong>{formatNumber(totalRecommended)}</strong>
                 <span>units across the selected locations</span>
               </div>
@@ -1454,35 +1460,52 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
               </div>
             </div>
 
-            <article className="forecast-decision-panel panel" aria-labelledby="forecast-decision-heading">
+            <article className="forecast-decision-panel panel" aria-labelledby="forecast-baseline-heading">
               <div className="forecast-decision-heading">
                 <div>
-                  <span className="eyebrow">AI decision breakdown</span>
-                  <h3 id="forecast-decision-heading">Why these numbers?</h3>
-                  <p>See how the history-only estimate, the selected time period, and every Analysis Skill factor produced each location&apos;s recommendation.</p>
+                  <span className="eyebrow">Step 1 · Historical calculation</span>
+                  <h3 id="forecast-baseline-heading">Historical baseline by location</h3>
+                  <p>This is the app&apos;s deterministic starting point, calculated from uploaded sales history before any outside factor is applied.</p>
                 </div>
-                <span className="decision-cost-note"><Info size={15} aria-hidden="true" /> Uses the saved forecast—no additional AI call</span>
+                <span className="decision-cost-note"><Info size={15} aria-hidden="true" /> Calculated without AI</span>
               </div>
               <div className="forecast-decision-locations">
                 {forecastDecisionBreakdowns.map((breakdown) => {
-                  const difference = breakdown.recommended - breakdown.baseline;
-                  const percentage = breakdown.baseline > 0 ? (difference / breakdown.baseline) * 100 : null;
                   return (
                     <section className="forecast-decision-location" key={breakdown.run.id || breakdown.run.locationId}>
                       <div className="forecast-decision-location-heading">
                         <div><h4>{breakdown.locationName}</h4><p>{titleCase(breakdown.run.period ?? forecastPeriod)} · {formatRange(breakdown.run.periodStart, breakdown.run.periodEnd)}</p></div>
-                        <span className={`status-badge ${breakdown.run.researchCompleted ? "status-active" : "status-warning"}`}>{breakdown.run.researchCompleted ? "AI research completed" : "History-only fallback"}</span>
+                        <span className="status-badge status-active">Historical calculation saved</span>
                       </div>
-                      <p className="forecast-decision-summary">{decisionSummary(breakdown)}</p>
-                      <div className="forecast-decision-math" aria-label={`Forecast calculation for ${breakdown.locationName}`}>
-                        <span><small>History-only estimate</small><strong>{formatNumber(breakdown.baseline)}</strong><em>units</em></span>
-                        <span className="forecast-math-operator" aria-hidden="true">+</span>
-                        <span><small>Factor change</small><strong className={difference < 0 ? "metric-negative" : difference > 0 ? "metric-positive" : ""}>{difference > 0 ? "+" : ""}{formatNumber(difference)}</strong><em>{percentage === null ? "No baseline" : formatSignedPercent(percentage)}</em></span>
-                        <span className="forecast-math-operator" aria-hidden="true">=</span>
-                        <span className="is-result"><small>Recommended</small><strong>{formatNumber(breakdown.recommended)}</strong><em>units</em></span>
-                      </div>
+                      <div className="forecast-baseline-value"><small>History-based baseline</small><strong>{formatNumber(breakdown.baseline)}</strong><span>units for this location and period</span></div>
+                      <p className="forecast-decision-summary">This baseline uses the app&apos;s saved historical calculation. It remains visible beside the AI-advised number so a manager can judge every suggested change.</p>
+                    </section>
+                  );
+                })}
+              </div>
+            </article>
+
+            <article className="forecast-decision-panel panel" aria-labelledby="forecast-research-heading">
+              <div className="forecast-decision-heading">
+                <div>
+                  <span className="eyebrow">Step 2 · Current outside conditions</span>
+                  <h3 id="forecast-research-heading">Live researched factors by location</h3>
+                  <p>These are the dated, location-specific findings requested by the active Analysis Skill. A finding does not automatically prove a sales effect.</p>
+                </div>
+                <span className="decision-cost-note"><Info size={15} aria-hidden="true" /> Saved research—no additional AI call</span>
+              </div>
+              <div className="forecast-decision-locations">
+                {forecastDecisionBreakdowns.map((breakdown) => (
+                  <section className="forecast-decision-location" key={breakdown.run.id || breakdown.run.locationId}>
+                    <div className="forecast-decision-location-heading">
+                      <div><h4>{breakdown.locationName}</h4><p>{titleCase(breakdown.run.period ?? forecastPeriod)} · {formatRange(breakdown.run.periodStart, breakdown.run.periodEnd)}</p></div>
+                      <span className={`status-badge ${breakdown.run.researchCompleted ? "status-active" : "status-warning"}`}>{breakdown.run.researchCompleted ? "Live research completed" : "Research did not complete"}</span>
+                    </div>
+                    {!breakdown.run.researchCompleted ? (
+                      <StatePanel title="No researched factors were applied" message="The AI request did not complete successfully. The app preserved the historical baseline and did not represent these factors as reviewed." />
+                    ) : (
                       <div className="forecast-factor-explanations">
-                        <h5>All factors reviewed</h5>
+                        <h5>Saved factor findings</h5>
                         {breakdown.factors.length ? breakdown.factors.map((factor) => {
                           const changedProducts = new Set(factor.assessments.filter((assessment) => Math.abs(assessment.percent) >= 0.05).map((assessment) => assessment.productId)).size;
                           const hasPositive = factor.assessments.some((assessment) => assessment.percent > 0.05);
@@ -1491,17 +1514,17 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
                           return (
                             <details className="forecast-factor-explanation" key={factor.id}>
                               <summary>
-                                <span><strong>{factor.name}</strong><small>{factor.assessments.length ? changedProducts ? `${changedProducts} ${changedProducts === 1 ? "product" : "products"} adjusted` : "Checked; no product adjustment" : "No saved assessment"}</small></span>
+                                <span><strong>{factor.name}</strong><small>{factor.assessments.length ? changedProducts ? `${changedProducts} historically supported ${changedProducts === 1 ? "adjustment" : "adjustments"}` : "Researched; no historically supported change" : "No saved assessment"}</small></span>
                                 <span className={`factor-effect ${effectTone}`}>{factorEffectLabel(factor.assessments)}</span>
                                 <ChevronDown size={16} aria-hidden="true" />
                               </summary>
                               <div className="forecast-factor-products">
                                 {factor.assessments.length ? factor.assessments.map((assessment) => (
                                   <section className="forecast-factor-product" key={`${factor.id}-${assessment.productId}`}>
-                                    <div><strong>{assessment.productName}</strong><span className={assessment.percent < -0.05 ? "metric-negative" : assessment.percent > 0.05 ? "metric-positive" : ""}>{formatSignedPercent(assessment.percent)}</span></div>
-                                    <p><b>What the AI found:</b> {assessment.evidence || "No current evidence supported a change for this factor."}</p>
-                                    <p><b>Why it matters:</b> {assessment.relevance || "No demonstrated relationship justified changing this product&apos;s historical estimate."}</p>
-                                    {assessment.sources.length ? <div className="forecast-factor-sources"><span>Evidence:</span>{assessment.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={`${source.runId}-${source.id}`}>{source.title}{source.publisher ? ` · ${source.publisher}` : ""} <ExternalLink size={11} aria-hidden="true" /></a>)}</div> : <small className="forecast-no-source">{Math.abs(assessment.percent) < 0.05 ? "No linked source was needed or returned for this neutral assessment." : "No source link was saved; review this adjustment before acting."}</small>}
+                                    <div><strong>{assessment.productName}</strong><span className={assessment.percent < -0.05 ? "metric-negative" : assessment.percent > 0.05 ? "metric-positive" : ""}>{assessment.historicalBasis === "supported" ? `${formatSignedPercent(assessment.percent)} supported` : assessment.historicalBasis === "unavailable" ? "No factor history" : "Not relevant"}</span></div>
+                                    <p><b>What was found:</b> {assessment.evidence || "No current evidence was saved for this factor."}</p>
+                                    <p><b>Location and product relevance:</b> {assessment.relevance || "The saved assessment did not establish a relevant relationship."}</p>
+                                    {assessment.sources.length ? <div className="forecast-factor-sources"><span>Sources:</span>{assessment.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={`${source.runId}-${source.id}`}>{source.title}{source.publisher ? ` · ${source.publisher}` : ""} <ExternalLink size={11} aria-hidden="true" /></a>)}</div> : <small className="forecast-no-source">No direct source was saved; review this result before acting.</small>}
                                   </section>
                                 )) : <p className="forecast-factor-empty">This factor did not produce a saved assessment, so the app applied no change from it.</p>}
                               </div>
@@ -1509,10 +1532,55 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
                           );
                         }) : <p className="forecast-factor-empty">No outside factors were active for this saved run.</p>}
                       </div>
-                      <details className="forecast-product-conclusions">
-                        <summary><span><strong>Product-by-product conclusion</strong><small>How each final quantity was reached</small></span><ChevronDown size={16} aria-hidden="true" /></summary>
-                        <div>{breakdown.recommendations.map((recommendation) => <p key={recommendation.productId}><strong>{recommendation.productName}: {formatNumber(recommendation.baselineQuantity)} → {formatNumber(recommendation.recommendedQuantity)} units.</strong> {recommendation.explanation || "No additional explanation was saved."}</p>)}</div>
-                      </details>
+                    )}
+                  </section>
+                ))}
+              </div>
+            </article>
+
+            <article className="forecast-decision-panel forecast-rough-panel panel" aria-labelledby="forecast-rough-heading">
+              <div className="forecast-decision-heading">
+                <div>
+                  <span className="eyebrow">Step 3 · Low-confidence scenario</span>
+                  <h3 id="forecast-rough-heading">Rough prediction based on no previous data for these factors</h3>
+                  <p>When current evidence is relevant but your uploaded history does not show how that factor changed sales, the AI may offer a cautious opinion using the limits in your Analysis Skill. This is not a historically proven effect.</p>
+                </div>
+                <span className="status-badge status-warning">Manager review required</span>
+              </div>
+              <div className="forecast-decision-locations">
+                {forecastDecisionBreakdowns.map((breakdown) => {
+                  const roughFactors = breakdown.factors.map((factor) => ({
+                    ...factor,
+                    assessments: factor.assessments.filter((assessment) => assessment.historicalBasis === "unavailable"),
+                  })).filter((factor) => factor.assessments.length > 0);
+                  return (
+                    <section className="forecast-decision-location" key={breakdown.run.id || breakdown.run.locationId}>
+                      <div className="forecast-decision-location-heading">
+                        <div><h4>{breakdown.locationName}</h4><p>{titleCase(breakdown.run.period ?? forecastPeriod)} · {formatRange(breakdown.run.periodStart, breakdown.run.periodEnd)}</p></div>
+                        <span className={`status-badge ${breakdown.run.researchCompleted ? "status-warning" : "status-neutral"}`}>{breakdown.run.researchCompleted ? "Low-confidence opinion" : "Unavailable"}</span>
+                      </div>
+                      {!breakdown.run.researchCompleted ? <p className="forecast-factor-empty">No rough prediction is shown because live research did not complete.</p> : roughFactors.length ? (
+                        <div className="forecast-factor-explanations">
+                          {roughFactors.map((factor) => (
+                            <details className="forecast-factor-explanation" key={factor.id} open>
+                              <summary>
+                                <span><strong>{factor.name}</strong><small>No comparable factor history was available</small></span>
+                                <span className="factor-effect is-neutral">{factorEffectLabel(factor.assessments, "rough")}</span>
+                                <ChevronDown size={16} aria-hidden="true" />
+                              </summary>
+                              <div className="forecast-factor-products">
+                                {factor.assessments.map((assessment) => (
+                                  <section className="forecast-factor-product" key={`${factor.id}-${assessment.productId}`}>
+                                    <div><strong>{assessment.productName}</strong><span className={assessment.roughPercent < -0.05 ? "metric-negative" : assessment.roughPercent > 0.05 ? "metric-positive" : ""}>{formatSignedPercent(assessment.roughPercent)} rough estimate</span></div>
+                                    <p><b>Possible effect:</b> {assessment.roughReasoning || "The AI did not suggest a change without historical proof for this factor."}</p>
+                                    <p><b>Current fact considered:</b> {assessment.evidence || assessment.relevance || "No current fact was saved."}</p>
+                                  </section>
+                                ))}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      ) : <p className="forecast-factor-empty">Every factor was either historically supported or not relevant, so no separate no-history estimate was needed.</p>}
                     </section>
                   );
                 })}
@@ -1521,31 +1589,38 @@ export function DashboardScreen({ notify, appData, brandId, locationId, historyP
 
             <article className="forecast-table-wrap panel">
               <div className="forecast-table-heading">
-                <div><h3>Production plan by product</h3><p>Open a product to see the factors, location breakdown, and saved sources.</p></div>
+                <div><span className="eyebrow">Step 4 · Planning decision</span><h3>AI-advised production quantities</h3><p>Compare the AI opinion with the historical baseline, then review the brief reason before deciding what to make.</p></div>
                 <button type="button" className="button button-secondary" onClick={exportForecast}><Download size={16} aria-hidden="true" /> Export plan</button>
               </div>
               <div className="live-forecast-table-scroll">
                 <table className="live-forecast-table">
                   <caption className="sr-only">Recommended production plan for the selected assigned locations</caption>
-                  <thead><tr><th>Product</th><th>Recommended</th><th>History-only</th><th>Change</th><th><span className="sr-only">Details</span></th></tr></thead>
+                  <thead><tr><th>Product</th><th>Historical baseline</th><th>AI-advised</th><th>Difference</th><th>Brief reason</th><th><span className="sr-only">Details</span></th></tr></thead>
                   <tbody>
                     {forecastProducts.map((product) => {
                       const expanded = expandedProduct === product.id;
                       const adjustment = product.baseline > 0 ? ((product.recommended - product.baseline) / product.baseline) * 100 : null;
                       const factorNames = [...new Set(product.adjustments.map((item) => item.variableName).filter(Boolean))];
+                      const changedFactorNames = [...new Set(product.adjustments.filter((item) => Math.abs(item.percent) >= 0.05 || Math.abs(item.roughPercent) >= 0.05).map((item) => item.variableName).filter(Boolean))];
+                      const briefReason = !researchCompleted
+                        ? "Research did not complete; baseline preserved."
+                        : changedFactorNames.length
+                          ? `${changedFactorNames.join(", ")} changed the planning opinion.`
+                          : "Research found no supported or rough change.";
                       const evidence = scopedForecast?.sources.filter((source) => (!source.runId || product.runIds.has(source.runId)) && (product.adjustments.some((item) => item.sourceIds.includes(source.id)) || product.adjustments.every((item) => item.sourceIds.length === 0))) ?? [];
                       return (
                         <Fragment key={product.id}>
                           <tr className="forecast-product-row">
-                            <td className="forecast-product"><strong>{product.name}</strong><small>{titleCase(product.confidence)} confidence · {factorNames.length ? `${factorNames.length} ${factorNames.length === 1 ? "factor" : "factors"} applied` : researchCompleted ? "No outside adjustment" : "Sales history only"}</small></td>
-                            <td className="forecast-quantity" data-label="Recommended"><strong>{formatNumber(product.recommended)}</strong><small>units</small></td>
-                            <td data-label="History-only">{formatNumber(product.baseline)}</td>
-                            <td data-label="Change" className={adjustment !== null && adjustment < 0 ? "metric-negative" : "metric-positive"}>{adjustment === null ? "—" : `${adjustment > 0 ? "+" : ""}${adjustment.toFixed(1)}%`}</td>
+                            <td className="forecast-product"><strong>{product.name}</strong><small>{titleCase(product.confidence)} confidence · {factorNames.length ? `${factorNames.length} ${factorNames.length === 1 ? "factor" : "factors"} researched` : "Sales history only"}</small></td>
+                            <td data-label="Historical baseline">{formatNumber(product.baseline)}</td>
+                            <td className="forecast-quantity" data-label="AI-advised"><strong>{formatNumber(product.recommended)}</strong><small>units</small></td>
+                            <td data-label="Difference" className={adjustment !== null && adjustment < 0 ? "metric-negative" : adjustment !== null && adjustment > 0 ? "metric-positive" : ""}>{adjustment === null ? "—" : `${product.recommended - product.baseline > 0 ? "+" : ""}${formatNumber(product.recommended - product.baseline)} · ${formatSignedPercent(adjustment)}`}</td>
+                            <td className="forecast-brief-reason" data-label="Brief reason">{briefReason}</td>
                             <td className="forecast-detail-cell"><button type="button" className="icon-button expand-button" aria-label={`${expanded ? "Hide" : "Show"} reasoning for ${product.name}`} aria-expanded={expanded} onClick={() => setExpandedProduct(expanded ? null : product.id)}><ChevronDown size={17} /></button></td>
                           </tr>
                           {expanded ? (
                             <tr className="live-forecast-details">
-                              <td colSpan={5}>
+                              <td colSpan={6}>
                                 <div className="forecast-reasoning">
                                   <section className="reason-summary"><span className="reason-icon"><Sparkles size={18} aria-hidden="true" /></span><div><h4>Why this amount</h4>{product.explanations.length ? product.explanations.map((explanation) => <p key={explanation}>{explanation}</p>) : <p>No explanation was stored for this recommendation.</p>}</div></section>
                                   <section className="forecast-detail-group"><h4>Factors considered</h4><div className="reason-tags">{factorNames.length ? factorNames.map((name) => <span key={name}>{name}</span>) : <span>Sales history only</span>}</div></section>

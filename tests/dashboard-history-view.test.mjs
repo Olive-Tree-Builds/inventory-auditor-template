@@ -37,11 +37,11 @@ test("historical metric cards explain every displayed measure", () => {
   assert.match(styles, /\.stat-card-description\s*\{/);
 });
 
-test("forecasting uses a compact disclosure, a stable five-column table, and readable mobile cards", () => {
+test("forecasting uses a compact disclosure, a decision table, and readable mobile cards", () => {
   assert.match(dashboard, /<details className=\{`analysis-context-panel/);
   assert.match(dashboard, /Forecast inputs/);
-  assert.match(dashboard, /<th>Product<\/th><th>Recommended<\/th><th>History-only<\/th><th>Change<\/th>/);
-  assert.match(dashboard, /<td colSpan=\{5\}>/);
+  assert.match(dashboard, /<th>Product<\/th><th>Historical baseline<\/th><th>AI-advised<\/th><th>Difference<\/th><th>Brief reason<\/th>/);
+  assert.match(dashboard, /<td colSpan=\{6\}>/);
   assert.match(dashboard, /Why this amount/);
   assert.match(dashboard, /Factors considered/);
   assert.match(dashboard, /Location breakdown/);
@@ -55,15 +55,14 @@ test("saved forecasts include a location-and-period decision breakdown for every
   assert.match(dashboard, /const forecastDecisionBreakdowns = useMemo/);
   assert.match(dashboard, /new Map\(activeVariables\.map\(\(variable\) => \[variable\.id, variable\.name\]\)\)/);
   assert.match(dashboard, /locationName: locationById\.get\(run\.locationId\)\?\.name/);
-  assert.match(dashboard, /AI decision breakdown/);
-  assert.match(dashboard, /Why these numbers\?/);
-  assert.match(dashboard, /History-only estimate/);
-  assert.match(dashboard, /Factor change/);
-  assert.match(dashboard, /All factors reviewed/);
-  assert.match(dashboard, /What the AI found:/);
-  assert.match(dashboard, /Why it matters:/);
-  assert.match(dashboard, /Product-by-product conclusion/);
-  assert.match(dashboard, /Uses the saved forecast—no additional AI call/);
-  assert.match(styles, /\.forecast-decision-math\s*\{/);
+  assert.match(dashboard, /Historical baseline by location/);
+  assert.match(dashboard, /Live researched factors by location/);
+  assert.match(dashboard, /Rough prediction based on no previous data for these factors/);
+  assert.match(dashboard, /AI-advised production quantities/);
+  assert.match(dashboard, /What was found:/);
+  assert.match(dashboard, /Possible effect:/);
+  assert.match(dashboard, /No researched factors were applied/);
+  assert.match(dashboard, /Saved research—no additional AI call/);
+  assert.match(styles, /\.forecast-baseline-value\s*\{/);
   assert.match(styles, /\.forecast-factor-explanation summary\s*\{/);
 });

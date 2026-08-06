@@ -79,6 +79,8 @@ test("forecast routes derive exact bounds on the server and the dashboard uses s
 
   assert.match(latest, /dashboardPeriodBounds\(period, anchor\)/);
   assert.doesNotMatch(latest, /forecastPeriod\(/);
+  assert.match(latest, /candidate\.research_completed === true/);
+  assert.match(latest, /Showing the most recent completed research/);
   assert.match(run, /periodOverride = dashboardPeriodBounds\(input\.period, anchor\)/);
   assert.match(run, /periodOverride,/);
   assert.match(history, /selection: \{ period, anchor, \.\.\.bounds \}/);

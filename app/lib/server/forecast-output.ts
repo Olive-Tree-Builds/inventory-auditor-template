@@ -65,16 +65,25 @@ export const FORECAST_OUTPUT_JSON_SCHEMA = {
             items: {
               type: "object",
               additionalProperties: false,
-              required: ["variable_id", "variable", "direction", "adjustment_percent", "confidence", "relevance", "evidence", "source_ids"],
+              required: [
+                "variable_id", "variable", "historical_basis", "direction", "adjustment_percent",
+                "confidence", "relevance", "evidence", "source_ids", "rough_direction",
+                "rough_adjustment_percent", "rough_confidence", "rough_reasoning",
+              ],
               properties: {
                 variable_id: { type: "string" },
                 variable: { type: "string" },
+                historical_basis: { type: "string", enum: ["supported", "unavailable", "not_relevant"] },
                 direction: { type: "string", enum: ["increase", "decrease", "neutral"] },
                 adjustment_percent: { type: "number" },
                 confidence: { type: "string", enum: ["high", "medium", "low"] },
                 relevance: { type: "string" },
                 evidence: { type: "string" },
                 source_ids: { type: "array", items: { type: "string" } },
+                rough_direction: { type: "string", enum: ["increase", "decrease", "neutral"] },
+                rough_adjustment_percent: { type: "number" },
+                rough_confidence: { type: "string", enum: ["low"] },
+                rough_reasoning: { type: "string" },
               },
             },
           },
@@ -141,12 +150,17 @@ export type ForecastOutput = {
     adjustments: Array<{
       variable_id: string;
       variable: string;
+      historical_basis: "supported" | "unavailable" | "not_relevant";
       direction: "increase" | "decrease" | "neutral";
       adjustment_percent: number;
       confidence: "high" | "medium" | "low";
       relevance: string;
       evidence: string;
       source_ids: string[];
+      rough_direction: "increase" | "decrease" | "neutral";
+      rough_adjustment_percent: number;
+      rough_confidence: "low";
+      rough_reasoning: string;
     }>;
     recommended_quantity: number;
     confidence: "high" | "medium" | "low";
@@ -183,6 +197,8 @@ export type ForecastValidationContext = {
   provider: { name: string; model: string };
   maxQuantity?: number;
   maxAbsAdjustmentPercent?: number;
+  maxAbsRoughFactorAdjustmentPercent?: number;
+  maxAbsCombinedRoughAdjustmentPercent?: number;
 };
 
 export class ForecastOutputValidationError extends Error {
@@ -350,6 +366,9 @@ export function validateForecastOutput(raw: unknown, context: ForecastValidation
 
   const maxQuantity = context.maxQuantity ?? 1_000_000;
   const maxAbsAdjustment = context.maxAbsAdjustmentPercent ?? 100;
+  const maxAbsFactorAdjustment = Math.min(25, maxAbsAdjustment);
+  const maxAbsRoughFactorAdjustment = context.maxAbsRoughFactorAdjustmentPercent ?? 15;
+  const maxAbsCombinedRoughAdjustment = context.maxAbsCombinedRoughAdjustmentPercent ?? 30;
   const variableNames = new Map(context.activeVariables.map((entry) => [entry.id, entry.name]));
   const productNames = new Map(context.products.map((entry) => [entry.id, entry.name]));
   const baselineQuantities = new Map(context.baselines.map((entry) => [`${entry.locationId}\u0000${entry.productId}`, entry.quantity]));
@@ -393,34 +412,55 @@ export function validateForecastOutput(raw: unknown, context: ForecastValidation
     const adjustments = Array.isArray(adjustmentRows) ? adjustmentRows : [];
     const seenVariables = new Set<string>();
     let adjustmentTotal = 0;
+    let roughAdjustmentTotal = 0;
     adjustments.forEach((adjustmentEntry, adjustmentIndex) => {
       const adjustmentPath = `${path}.adjustments[${adjustmentIndex}]`;
       const adjustment = object(adjustmentEntry, adjustmentPath, issues);
       const variableId = string(adjustment, "variable_id", adjustmentPath, issues);
       const variable = string(adjustment, "variable", adjustmentPath, issues);
+      const historicalBasis = string(adjustment, "historical_basis", adjustmentPath, issues);
       const direction = string(adjustment, "direction", adjustmentPath, issues);
       const percent = number(adjustment, "adjustment_percent", adjustmentPath, issues);
       const adjustmentConfidence = string(adjustment, "confidence", adjustmentPath, issues);
       string(adjustment, "relevance", adjustmentPath, issues);
       string(adjustment, "evidence", adjustmentPath, issues);
       const adjustmentSourceIds = stringArray(adjustment, "source_ids", adjustmentPath, issues);
+      const roughDirection = string(adjustment, "rough_direction", adjustmentPath, issues);
+      const roughPercent = number(adjustment, "rough_adjustment_percent", adjustmentPath, issues);
+      const roughConfidence = string(adjustment, "rough_confidence", adjustmentPath, issues);
+      string(adjustment, "rough_reasoning", adjustmentPath, issues);
+      enumValue(historicalBasis, ["supported", "unavailable", "not_relevant"], `${adjustmentPath}.historical_basis`, issues);
       enumValue(direction, ["increase", "decrease", "neutral"], `${adjustmentPath}.direction`, issues);
       enumValue(adjustmentConfidence, ["high", "medium", "low"], `${adjustmentPath}.confidence`, issues);
+      enumValue(roughDirection, ["increase", "decrease", "neutral"], `${adjustmentPath}.rough_direction`, issues);
       if (!variableNames.has(variableId)) issues.push(`${adjustmentPath}.variable_id is not active for this run.`);
       if (variableNames.has(variableId) && variable !== variableNames.get(variableId)) issues.push(`${adjustmentPath}.variable does not match the active variable snapshot.`);
       if (seenVariables.has(variableId)) issues.push(`${adjustmentPath}.variable_id is duplicated for this recommendation.`);
       if (variableId) seenVariables.add(variableId);
-      if (!Number.isFinite(percent) || Math.abs(percent) > maxAbsAdjustment) issues.push(`${adjustmentPath}.adjustment_percent exceeds the configured safety bound.`);
+      if (!Number.isFinite(percent) || Math.abs(percent) > maxAbsFactorAdjustment) issues.push(`${adjustmentPath}.adjustment_percent exceeds the configured safety bound.`);
       if ((percent > 0 && direction !== "increase") || (percent < 0 && direction !== "decrease") || (percent === 0 && direction !== "neutral")) {
         issues.push(`${adjustmentPath}.direction does not match its signed adjustment.`);
       }
-      if (percent !== 0 && adjustmentSourceIds.length === 0) issues.push(`${adjustmentPath} needs a direct source for a non-zero adjustment.`);
+      if (!Number.isFinite(roughPercent) || Math.abs(roughPercent) > maxAbsRoughFactorAdjustment) issues.push(`${adjustmentPath}.rough_adjustment_percent exceeds the configured rough safety bound.`);
+      if ((roughPercent > 0 && roughDirection !== "increase") || (roughPercent < 0 && roughDirection !== "decrease") || (roughPercent === 0 && roughDirection !== "neutral")) {
+        issues.push(`${adjustmentPath}.rough_direction does not match its signed rough adjustment.`);
+      }
+      if (roughConfidence !== "low") issues.push(`${adjustmentPath}.rough_confidence must remain low.`);
+      if (historicalBasis === "supported" && roughPercent !== 0) issues.push(`${adjustmentPath} cannot use a rough adjustment with supported factor history.`);
+      if (historicalBasis === "unavailable" && (percent !== 0 || direction !== "neutral" || adjustmentConfidence !== "low")) {
+        issues.push(`${adjustmentPath} must keep the evidence-backed track neutral and low-confidence when factor history is unavailable.`);
+      }
+      if (historicalBasis === "not_relevant" && (percent !== 0 || roughPercent !== 0 || direction !== "neutral" || roughDirection !== "neutral")) {
+        issues.push(`${adjustmentPath} must keep both tracks neutral when the factor is not relevant.`);
+      }
+      if (researchCompleted && adjustmentSourceIds.length === 0) issues.push(`${adjustmentPath} needs a direct source showing that the factor was researched.`);
       if (adjustmentSourceIds.length !== new Set(adjustmentSourceIds).size) issues.push(`${adjustmentPath}.source_ids contains duplicates.`);
       adjustmentSourceIds.forEach((sourceId) => {
         referencedSourceIds.add(sourceId);
         if (!sourceIds.has(sourceId)) issues.push(`${adjustmentPath} references an unknown source ID.`);
       });
       if (Number.isFinite(percent)) adjustmentTotal += percent;
+      if (Number.isFinite(roughPercent)) roughAdjustmentTotal += roughPercent;
     });
 
     if (researchCompleted && !exactSet([...seenVariables], context.activeVariables.map((variable) => variable.id))) {
@@ -428,8 +468,11 @@ export function validateForecastOutput(raw: unknown, context: ForecastValidation
     }
     if (!researchCompleted && adjustments.length) issues.push(`${path}.adjustments must be empty when research was not completed.`);
     if (Math.abs(adjustmentTotal) > maxAbsAdjustment) issues.push(`${path} has an unsafe combined adjustment magnitude.`);
+    if (Math.abs(roughAdjustmentTotal) > maxAbsCombinedRoughAdjustment) issues.push(`${path} has an unsafe combined rough adjustment magnitude.`);
+    if (Math.abs(adjustmentTotal + roughAdjustmentTotal) > maxAbsAdjustment) issues.push(`${path} has an unsafe combined AI-advised adjustment magnitude.`);
+    if (status === "complete" && roughAdjustmentTotal !== 0) issues.push(`${path} uses a rough estimate and must be marked needs_review.`);
     if (Number.isFinite(baseline)) {
-      const reconciled = Math.max(0, Math.round(baseline * (1 + adjustmentTotal / 100)));
+      const reconciled = Math.max(0, Math.round(baseline * (1 + adjustmentTotal / 100 + roughAdjustmentTotal / 100)));
       if (recommended !== reconciled) issues.push(`${path}.recommended_quantity does not reconcile with the baseline and adjustments.`);
     }
   });

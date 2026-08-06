@@ -270,7 +270,7 @@ export async function rejectedForecastProviderRequest(response: Response): Promi
 
 export function forecastOutputTokenBudget(request: ForecastProviderRequest): number {
   const assessments = request.products.length * Math.max(1, request.activeVariables.length);
-  return Math.min(12_000, Math.max(2_500, 1_800 + assessments * 180));
+  return Math.min(16_000, Math.max(3_000, 2_000 + assessments * 300));
 }
 
 export class OpenAIResponsesForecastProvider implements ForecastProvider {
@@ -320,6 +320,7 @@ export class OpenAIResponsesForecastProvider implements ForecastProvider {
       forecast_period: request.period,
       products: request.products,
       active_variables: request.activeVariables,
+      expected_assessment_count: request.scope.locationIds.length * request.products.length * request.activeVariables.length,
       historical_evidence: request.historicalEvidence,
       policy_sha256: request.policySha256,
     };
@@ -362,6 +363,9 @@ export class OpenAIResponsesForecastProvider implements ForecastProvider {
                   "Use each supplied location address and deterministic research area only to identify that exact authorized place; never broaden the geographic scope.",
                   "The host already calculated all historical metrics and baselines. Never recalculate or replace them.",
                   "Use live web search only to assess every active variable for every requested product.",
+                  "Return exactly the expected_assessment_count combinations. Check the count and IDs before answering.",
+                  "Keep historically supported adjustments separate from low-confidence rough estimates when factor-specific history is unavailable.",
+                  "Use each active variable's Rough estimate guidance for the rough track, within the host caps. Never present a rough estimate as historically supported.",
                   "Return research assessments only. Do not return baseline or recommended quantities; the host calculates the final production plan.",
                   "<ANALYSIS_SKILL>",
                   request.analysisPolicy,

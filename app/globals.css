@@ -395,6 +395,11 @@ code {
   color: var(--warning);
 }
 
+.status-neutral {
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+}
+
 .status-dot {
   width: 7px;
   height: 7px;
@@ -1809,6 +1814,44 @@ code {
   font-size: 0.88rem;
 }
 
+.forecast-baseline-value {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 3px 9px;
+  width: min(100%, 360px);
+  padding: 15px 17px;
+  border: 1px solid #cfe2d8;
+  border-radius: 12px;
+  background: var(--forest-soft);
+}
+
+.forecast-baseline-value small {
+  grid-column: 1 / -1;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.forecast-baseline-value strong {
+  color: var(--forest);
+  font-size: 1.75rem;
+  letter-spacing: -0.04em;
+}
+
+.forecast-baseline-value span {
+  color: var(--ink-soft);
+  font-size: 0.73rem;
+}
+
+.forecast-rough-panel {
+  border-color: #ead39f;
+}
+
+.forecast-rough-panel .forecast-decision-heading {
+  background: #fffbf1;
+}
+
 .forecast-decision-math {
   display: grid;
   grid-template-columns: minmax(150px, 1fr) auto minmax(130px, 0.8fr) auto minmax(150px, 1fr);
@@ -2233,7 +2276,7 @@ code {
 
 .live-forecast-table {
   width: 100%;
-  min-width: 620px;
+  min-width: 880px;
   border-collapse: collapse;
   font-size: 0.8rem;
 }
@@ -2262,6 +2305,14 @@ code {
 
 .live-forecast-table .forecast-product {
   min-width: 220px;
+}
+
+.live-forecast-table .forecast-brief-reason {
+  min-width: 220px;
+  max-width: 340px;
+  color: var(--ink-soft);
+  line-height: 1.4;
+  white-space: normal;
 }
 
 .forecast-detail-cell {

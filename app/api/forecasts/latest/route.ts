@@ -55,8 +55,17 @@ export async function GET(request: Request) {
         .eq("policy_revision_id", requirements.policyRevisionId)
         .in("status", ["complete", "baseline_only", "needs_review"]);
       if (requirements.historyWatermark) query = query.gte("created_at", requirements.historyWatermark);
-      const result = await query.order("generated_at", { ascending: false }).limit(1).maybeSingle();
-      return { locationId: String(location.id), ...result };
+      const result = await query.order("generated_at", { ascending: false }).limit(10);
+      const candidates = Array.isArray(result.data) ? result.data as Array<Record<string, unknown>> : [];
+      const newest = candidates[0] ?? null;
+      const newestResearched = candidates.find((candidate) => (
+        candidate.research_completed === true && (candidate.status === "complete" || candidate.status === "needs_review")
+      )) ?? null;
+      const selected = newestResearched ?? newest;
+      const latestAttemptWarning = selected && newest && selected.id !== newest.id
+        ? `The latest forecast attempt did not complete live AI research. Showing the most recent completed research from ${String(selected.generated_at || selected.completed_at || "an earlier run")}. Latest attempt: ${(Array.isArray(newest.warnings) ? newest.warnings : []).join(" ") || "the historical baseline was preserved."}`
+        : null;
+      return { locationId: String(location.id), data: selected, error: result.error, latestAttemptWarning };
     }));
     if (runResults.some((result) => result.error)) {
       throw new HttpError(500, "Stored forecasts could not be loaded.", "forecasts_unavailable");
@@ -94,7 +103,12 @@ export async function GET(request: Request) {
         policySha256: String(run.policy_sha256),
         aiProvider: run.ai_provider ? String(run.ai_provider) : null,
         aiModel: run.ai_model ? String(run.ai_model) : null,
-        warnings: Array.isArray(run.warnings) ? run.warnings : [],
+        warnings: [
+          ...(Array.isArray(run.warnings) ? run.warnings : []),
+          ...(runResults.find((result) => result.locationId === String(run.location_id))?.latestAttemptWarning
+            ? [runResults.find((result) => result.locationId === String(run.location_id))!.latestAttemptWarning]
+            : []),
+        ],
         generatedAt: String(run.generated_at || run.completed_at),
         items: (itemRows ?? []).filter((item) => String(item.forecast_run_id) === runId).map((item) => ({
           id: String(item.id), productId: String(item.product_id), product: productNames.get(String(item.product_id)) || "Product",

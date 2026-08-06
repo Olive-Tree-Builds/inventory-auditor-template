@@ -6,6 +6,7 @@ const REQUIRED_VARIABLE_FIELDS = [
   "Applies when",
   "Evidence required",
   "Expected effect",
+  "Rough estimate guidance",
   "Fallback",
 ];
 
@@ -194,6 +195,7 @@ export function addAnalysisVariable(markdown, requestedName) {
     "  - Applies when: Current public evidence shows this condition is relevant to the exact location and forecast period.",
     "  - Evidence required: A current direct source plus comparable location-level historical sales when available.",
     "  - Expected effect: Derive direction and magnitude from supported historical comparisons; do not assume a fixed adjustment.",
+    "  - Rough estimate guidance: When the current condition is relevant but comparable history is unavailable, give a cautious low-confidence opinion within plus or minus 5%; use zero when applicability is uncertain.",
     "  - Products affected: Only products with a demonstrated relationship to this condition.",
     "  - Fallback: Use zero adjustment and lower confidence when evidence is missing, stale, conflicting, or unsupported.",
     "",

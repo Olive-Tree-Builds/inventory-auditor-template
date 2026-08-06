@@ -15,11 +15,12 @@ const rootPolicy = readFileSync("ANALYSIS_SKILL.md", "utf8");
 test("the repository policy is the valid source of active variables", () => {
   const result = parseAnalysisSkill(rootPolicy);
   assert.deepEqual(result.errors, []);
-  assert.equal(result.policyVersion, "2.0.0");
-  assert.equal(result.activeVariableRevision, "2");
+  assert.equal(result.policyVersion, "3.0.0");
+  assert.equal(result.activeVariableRevision, "3");
   assert.doesNotMatch(rootPolicy, /"baseline_quantity"/);
   assert.match(rootPolicy, /"product_id": "string"/);
-  assert.match(rootPolicy, /Output schema version: `2\.0`/);
+  assert.match(rootPolicy, /Output schema version: `3\.0`/);
+  assert.match(rootPolicy, /Rough estimate guidance/);
   assert.deepEqual(
     result.variables.map(({ id }) => id),
     ["weather", "holidays", "nearby-events", "school-schedules", "local-disruptions"],
@@ -56,6 +57,9 @@ test("malformed markers, duplicate IDs, and incomplete rules block activation", 
 
   const incomplete = rootPolicy.replace(/  - Fallback: Use zero adjustment and lower confidence when applicability or historical effect is unclear\.\n/, "");
   assert.match(parseAnalysisSkill(incomplete).errors.join(" "), /Fallback/);
+
+  const missingRoughGuidance = rootPolicy.replace(/  - Rough estimate guidance: When current weather[^\n]+\n/, "");
+  assert.match(parseAnalysisSkill(missingRoughGuidance).errors.join(" "), /Rough estimate guidance/);
 });
 
 test("the parser handles CRLF and ignores Name fields outside the active block", () => {
@@ -70,8 +74,8 @@ test("activation advances auditable metadata after variable changes", () => {
   const prepared = prepareAnalysisSkillActivation(added.markdown, rootPolicy, "2026-07-17");
   assert.equal(prepared.error, null);
   const result = parseAnalysisSkill(prepared.markdown);
-  assert.equal(result.policyVersion, "2.0.1");
-  assert.equal(result.activeVariableRevision, "3");
+  assert.equal(result.policyVersion, "3.0.1");
+  assert.equal(result.activeVariableRevision, "4");
   assert.match(prepared.markdown, /- Last updated: `2026-07-17`/);
 });
 

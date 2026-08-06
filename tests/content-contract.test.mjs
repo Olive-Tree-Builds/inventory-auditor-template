@@ -134,6 +134,15 @@ test("the repository front page is the single browser-only owner setup guide", (
   assert.match(guide, /The basic app is ready when/);
   assert.match(guide, /If you enabled forecasting/);
   assert.match(guide, /If you enabled email/);
+  for (const forecastStep of [
+    "Historical baseline by location",
+    "Live researched factors by location",
+    "Rough prediction based on no previous data for these factors",
+    "AI-advised production quantities",
+    "Review needed",
+  ]) {
+    assert.ok(guide.includes(forecastStep), `missing forecast setup check: ${forecastStep}`);
+  }
   assert.ok(guide.indexOf("Save schedule") < guide.indexOf("Send test to me"), "email schedule must be saved before its internal test");
   for (const name of [
     "APP_URL",
@@ -196,6 +205,9 @@ test("the front page includes a complete guarded AI setup prompt for beginners",
     "EMAIL_DELIVERY_ENABLED=false",
     "Do not send email to a real manager",
     "every location assigned to the signed-in owner",
+    "four displayed steps in order",
+    "Any non-zero rough estimate must be low-confidence",
+    "truthful sales-history-only result or warning",
     "Observe at least two checks and verify exactly one email",
     "Leave all three controls off unless I separately and explicitly approve",
     "11-phase checklist",
@@ -206,6 +218,17 @@ test("the front page includes a complete guarded AI setup prompt for beginners",
 
   for (const service of ["GitHub", "Supabase", "Railway", "Resend", "ANALYSIS_SKILL.md", "Supabase Cron"]) {
     assert.ok(prompt.includes(service), `AI prompt omits required service: ${service}`);
+  }
+
+  const acceptance = read("docs/MANUAL_ACCEPTANCE_TEST.md");
+  for (const forecastStep of [
+    "Historical baseline by location",
+    "Live researched factors by location",
+    "Rough prediction based on no previous data for these factors",
+    "AI-advised production quantities",
+    "marks the run **Review needed**",
+  ]) {
+    assert.ok(acceptance.includes(forecastStep), `manual acceptance omits forecast check: ${forecastStep}`);
   }
 
   for (let phase = 0; phase <= 10; phase += 1) {

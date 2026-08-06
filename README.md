@@ -137,7 +137,7 @@ The basic app is now working. Open an optional section below only for a feature 
 
 ### Multivariate forecasting
 
-Forecasting needs a GitHub token and a compatible AI API. The app calculates and condenses the sales history locally. The AI reads the active `ANALYSIS_SKILL.md` and researches only the variables defined there; the app validates those sourced assessments and calculates the final recommendations itself.
+Forecasting needs a GitHub token and a compatible AI API. The app calculates and condenses the sales history locally. The AI reads the active `ANALYSIS_SKILL.md` and researches only the variables defined there; the app validates those sourced assessments and calculates the final recommendations itself. The result keeps four decisions separate: the historical baseline, live researched factors, any low-confidence rough estimate used when factor-specific history is unavailable, and the final AI-advised quantity.
 
 ### Connect GitHub
 
@@ -162,7 +162,13 @@ For the first test, choose a lower-cost model that the provider currently docume
 3. Select **Save securely**, then **Test capabilities**. A pass means the selected provider/model completed live search and returned JSON that passed the app's server-side validator.
 4. Open **Configuration → Analysis Skill**, read the active variables, and select **Save and activate**.
 5. Open **Dashboard**, select one location and **Day**, then run one forecast with test data.
-6. Confirm the recommendation has whole-number quantities, confidence information, and direct source links.
+6. Confirm the result shows, in order:
+   - **Historical baseline by location** for each product;
+   - **Live researched factors by location** for the selected dates, with direct source links;
+   - **Rough prediction based on no previous data for these factors**, kept separate and labeled low-confidence when factor-specific history is unavailable; and
+   - **AI-advised production quantities** beside the historical baseline, including the difference and a brief reason.
+
+Any non-zero rough estimate must show **Review needed**. If live research fails, accept only a clearly labeled sales-history-only result or warning; it must not claim that outside factors were applied.
 
 If no compatible provider or budget is approved, leave AI disconnected. The historical dashboard still works.
 
@@ -265,7 +271,7 @@ The basic app is ready when:
 - at least one brand and location exist; and
 - imported totals match the historical dashboard.
 
-If you enabled forecasting, one test forecast must follow the active Analysis Skill and contain source links. If you enabled email, one internal test email must be correct. Automatic email should remain off unless you deliberately completed that section.
+If you enabled forecasting, one test forecast must follow the active Analysis Skill and show the historical baseline, sourced live factors, the separate low-confidence rough-estimate section, and the final AI-advised quantity with its difference and reason. If you enabled email, one internal test email must be correct. Automatic email should remain off unless you deliberately completed that section.
 
 ## If you get stuck
 
@@ -452,7 +458,7 @@ PHASE 6 — GITHUB ANALYSIS SKILL AND AI FORECASTING
 7. Save and Test the connection. A model-list test alone is not full forecast proof.
 8. Open Configuration → Analysis Skill. Read and validate the entire repository-backed ANALYSIS_SKILL.md. Explain its active variables in plain language. Do not change them unless I request a specific change.
 9. Select Save and activate only after the exact repository version is reviewed.
-10. Choose the current **Day / Today** period. Run and verify one single-location forecast, then repeat one location at a time for every location assigned to the signed-in owner. Do not continue until every assigned location has a fresh current-policy forecast for the same **Today** horizon that the disabled email schedule will use. For each run, verify that the AI actually used the active Analysis Skill, performed current web research, stayed within the selected location and products, returned whole-number recommendations and confidence information, and supplied direct valid source URLs. Treat missing research or citations as a failed test.
+10. Choose the current **Day / Today** period. Run and verify one single-location forecast, then repeat one location at a time for every location assigned to the signed-in owner. Do not continue until every assigned location has a fresh current-policy forecast for the same **Today** horizon that the disabled email schedule will use. For each run, verify these four displayed steps in order: **Historical baseline by location**; **Live researched factors by location** with direct valid sources for the exact location and dates; the separate **Rough prediction based on no previous data for these factors** section; and **AI-advised production quantities** beside the baseline with the difference and a brief reason. Any non-zero rough estimate must be low-confidence and mark the run **Review needed**. If live research fails, require a truthful sales-history-only result or warning and do not pass the forecast as multivariate. Treat missing research, citations, scope, or explanations as a failed test.
 
 PHASE 7 — RESEND, AUTH EMAIL, AND APP EMAIL
 
@@ -495,7 +501,7 @@ PHASE 10 — FINAL QA AND HANDOFF
 2. Confirm Railway production is empty and only staging is deployed.
 3. Confirm Supabase migrations, authentication, row-level access, storage, and owner status.
 4. Confirm the historical Dashboard for all periods and individual products.
-5. Confirm GitHub Sync, the exact active ANALYSIS_SKILL.md revision, the AI connection, one cited forecast, Resend, one internal test email, one location-scoped user, and manual-email controls.
+5. Confirm GitHub Sync, the exact active ANALYSIS_SKILL.md revision, the AI connection, one forecast that passes every Phase 6 display and evidence check, Resend, one internal test email, one location-scoped user, and manual-email controls.
 6. Confirm the scheduler is either explicitly approved and tested or fully configured and safely off. Test all three stop controls when safe.
 7. Run every repository-provided automated test, type check, lint check, and production build available in the authorized environment. Do not claim they passed without the actual results.
 8. Produce a final sanitized handoff report containing:
@@ -511,7 +517,7 @@ PHASE 10 — FINAL QA AND HANDOFF
 
 DEFINITION OF DONE
 
-Do not say setup is complete until every applicable phase is Passed or explicitly marked Blocked with a clear reason. The minimum working historical app requires owner sign-in, one brand/location, a clean import, and reconciled Dashboard totals. Full forecasting additionally requires connected GitHub and AI, an activated repository Analysis Skill, and a cited test forecast. Full email additionally requires a verified Resend domain, custom SMTP, a connected app key, a saved disabled schedule, explicit location-scoped recipients, and a successful internal test. Automatic delivery additionally requires the protected Cron chain and my explicit activation approval.
+Do not say setup is complete until every applicable phase is Passed or explicitly marked Blocked with a clear reason. The minimum working historical app requires owner sign-in, one brand/location, a clean import, and reconciled Dashboard totals. Full forecasting additionally requires connected GitHub and AI, an activated repository Analysis Skill, and a test forecast that passes the four-step baseline, live-research, rough-estimate, and final-advice checks in Phase 6. Full email additionally requires a verified Resend domain, custom SMTP, a connected app key, a saved disabled schedule, explicit location-scoped recipients, and a successful internal test. Automatic delivery additionally requires the protected Cron chain and my explicit activation approval.
 
 Begin now by reading the entire README and AGENTS.md, inspecting the repository, showing me the 11-phase checklist, and asking only the first necessary access or preflight question.
 ```

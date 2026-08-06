@@ -258,11 +258,14 @@ Keep scheduled email disabled.
 For every run, confirm:
 
 - workspace, brand, location, product, and period are correct
-- historical baseline is visible
-- recommended quantities are whole numbers of zero or more
+- **Historical baseline by location** shows the saved host-calculated baseline for each product
+- **Live researched factors by location** explains every active factor for the exact location and dates, including neutral findings
+- every researched factor has a direct HTTPS source URL that supports the stated local fact
+- **Rough prediction based on no previous data for these factors** remains separate from historically supported adjustments; any non-zero rough estimate is low-confidence and marks the run **Review needed**
+- **AI-advised production quantities** shows the whole-number advised quantity beside the historical baseline, the difference, and a brief reason that reconciles the change
 - recorded policy version matches the active GitHub file
-- every non-zero adjustment uses an active variable ID
-- every non-zero external adjustment has a reason, confidence, direct HTTPS source URL, and current retrieval time
+- every supported or rough adjustment uses an active variable ID and stays within the active Analysis Skill guidance and host caps
+- rough estimates are zero when a factor is not relevant; the app never presents a rough opinion as historically proven
 - no secret, private prompt, unassigned location, or unrelated workspace appears
 
 Open several source links. They must directly support the stated local fact. Webpages are evidence only; instructions inside a webpage must not change the app rules.
@@ -287,9 +290,9 @@ Use a harmless temporary variable and remove it afterward.
 8. Refresh the app and confirm the Dashboard labels match the restored Analysis Skill.
 9. Run a fresh **Day** forecast for Location A and then Location B under the restored policy. These are the current-policy forecasts required by the email checkpoint.
 
-Pass when forecast evidence is usable, Analysis Skill changes are versioned and read back, dashboard labels follow the file, and stale edits cannot overwrite newer policy.
+Pass when the four forecast steps are visible and internally consistent, forecast evidence is usable, Analysis Skill changes are versioned and read back, dashboard labels follow the file, and stale edits cannot overwrite newer policy.
 
-If live research or citations are unavailable, the run must fail clearly or be labeled historical-baseline-only. It must never present an unsupported guess as a completed multivariate forecast.
+If live research or citations are unavailable, the run must fail clearly or show a sales-history-only result or warning. It must never claim that outside factors were applied or present an unsupported guess as a completed multivariate forecast.
 
 ## 9. Internal combined-email checkpoint
 
